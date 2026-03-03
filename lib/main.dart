@@ -1,9 +1,15 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'product_details_page.dart';
+import 'package:http/http.dart' as http;
+
 import 'chats_page.dart';
-import 'user_profile_page.dart';
 import 'components/product_grid_card.dart';
 import 'components/studket_app_bar.dart';
+import 'product_details_page.dart';
+import 'user_profile_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -12,7 +18,6 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -22,6 +27,72 @@ class MyApp extends StatelessWidget {
       ),
       home: const MyHomePage(title: 'Studket'),
     );
+  }
+}
+
+class ProductItem {
+  const ProductItem({
+    required this.id,
+    required this.name,
+    required this.priceLabel,
+    required this.location,
+    required this.imageUrl,
+    required this.description,
+  });
+
+  final String id;
+  final String name;
+  final String priceLabel;
+  final String location;
+  final String imageUrl;
+  final String description;
+
+  factory ProductItem.fromJson(Map<String, dynamic> json) {
+    final String name = (json['name'] ?? json['title'] ?? 'Untitled Product')
+        .toString();
+    final String location =
+        (json['location'] ?? json['address'] ?? 'Location unavailable')
+            .toString();
+    final String imageUrl =
+        (json['image'] ??
+                json['image_url'] ??
+                json['thumbnail'] ??
+                'https://picsum.photos/seed/default_product/300')
+            .toString();
+    final String description =
+        (json['description'] ??
+                '$name in excellent condition. Message the seller for details.')
+            .toString();
+
+    return ProductItem(
+      id: (json['id'] ?? json['product_id'] ?? name.hashCode).toString(),
+      name: name,
+      priceLabel: _formatPeso(json['price']),
+      location: location,
+      imageUrl: imageUrl,
+      description: description,
+    );
+  }
+
+  static String _formatPeso(dynamic rawPrice) {
+    if (rawPrice is num) {
+      final String amount = rawPrice % 1 == 0
+          ? rawPrice.toStringAsFixed(0)
+          : rawPrice.toStringAsFixed(2);
+      return '₱$amount';
+    }
+
+    final String text = (rawPrice ?? '').toString().trim();
+    if (text.isEmpty) return '₱0';
+
+    final String numeric = text.replaceAll(RegExp(r'[^0-9.]'), '');
+    final num? parsed = num.tryParse(numeric);
+    if (parsed == null) return '₱0';
+
+    final String amount = parsed % 1 == 0
+        ? parsed.toStringAsFixed(0)
+        : parsed.toStringAsFixed(2);
+    return '₱$amount';
   }
 }
 
@@ -36,8 +107,6 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   int currentPageIndex = 0;
-  final ScrollController _scrollController = ScrollController();
-  bool _isLoadingMore = false;
   final List<String> _categories = const [
     'Electronics',
     'Home',
@@ -54,127 +123,78 @@ class _MyHomePageState extends State<MyHomePage> {
     'Mia Brooks',
     'Emma Gray',
   ];
-  final List<Map<String, String>> _seedProducts = [
-    {
-      'name': 'Wireless Earbuds',
-      'price': '\$59',
-      'location': 'San Francisco, CA',
-      'image': 'https://picsum.photos/seed/earbuds/200',
-    },
-    {
-      'name': 'Vintage Desk Lamp',
-      'price': '\$34',
-      'location': 'Austin, TX',
-      'image': 'https://picsum.photos/seed/lamp/200',
-    },
-    {
-      'name': 'Minimal Backpack',
-      'price': '\$42',
-      'location': 'Seattle, WA',
-      'image': 'https://picsum.photos/seed/backpack/200',
-    },
-    {
-      'name': 'Ceramic Coffee Mug',
-      'price': '\$12',
-      'location': 'Chicago, IL',
-      'image': 'https://picsum.photos/seed/mug/200',
-    },
-    {
-      'name': 'Running Shoes',
-      'price': '\$68',
-      'location': 'Portland, OR',
-      'image': 'https://picsum.photos/seed/shoes/200',
-    },
-    {
-      'name': 'Smart Watch',
-      'price': '\$95',
-      'location': 'Boston, MA',
-      'image': 'https://picsum.photos/seed/watch/200',
-    },
-    {
-      'name': 'Bluetooth Speaker',
-      'price': '\$47',
-      'location': 'Denver, CO',
-      'image': 'https://picsum.photos/seed/speaker/200',
-    },
-    {
-      'name': 'Wooden Chair',
-      'price': '\$80',
-      'location': 'Nashville, TN',
-      'image': 'https://picsum.photos/seed/chair/200',
-    },
-    {
-      'name': 'Travel Suitcase',
-      'price': '\$73',
-      'location': 'Miami, FL',
-      'image': 'https://picsum.photos/seed/suitcase/200',
-    },
-    {
-      'name': 'Laptop Stand',
-      'price': '\$26',
-      'location': 'New York, NY',
-      'image': 'https://picsum.photos/seed/stand/200',
-    },
-  ];
-  late final List<Map<String, String>> products = List.of(_seedProducts);
 
-  Future<void> _refreshProducts() async {
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-    setState(() {
-      products.shuffle();
-    });
-  }
+  bool _isLoading = true;
+  String? _loadError;
+  List<ProductItem> _products = const <ProductItem>[];
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
+    _fetchProducts();
   }
 
-  @override
-  void dispose() {
-    _scrollController
-      ..removeListener(_onScroll)
-      ..dispose();
-    super.dispose();
+  String _apiBaseUrl() {
+    
+    if (kIsWeb) return 'http://localhost:8088/api/v1';
+    if (Platform.isAndroid) return 'http://10.0.2.2:8088/api/v1';
+    return 'http://localhost:8088/api/v1';
   }
 
-  void _onScroll() {
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 200) {
-      _loadMoreProducts();
+  Future<void> _fetchProducts({bool showLoader = true}) async {
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    } else {
+      setState(() {
+        _loadError = null;
+      });
+    }
+
+    try {
+      final Uri uri = Uri.parse('${_apiBaseUrl()}/products/');
+      final http.Response response = await http.get(uri);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('HTTP ${response.statusCode}');
+      }
+
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is! List) {
+        throw const FormatException('Products response is not a list');
+      }
+
+      final List<ProductItem> parsed = decoded
+          .whereType<Map>()
+          .map((item) => ProductItem.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _products = parsed;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Failed to load products. Pull to refresh and try again.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
-  Future<void> _loadMoreProducts() async {
-    if (_isLoadingMore) return;
-    setState(() {
-      _isLoadingMore = true;
-    });
-
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-
-    final int startId = products.length + 1;
-    final List<Map<String, String>> newProducts = List.generate(10, (index) {
-      final base = _seedProducts[index % _seedProducts.length];
-      final id = startId + index;
-      return {
-        'name': '${base['name']} $id',
-        'price': base['price']!,
-        'location': base['location']!,
-        'image': 'https://picsum.photos/seed/product_$id/200',
-      };
-    });
-
-    if (!mounted) return;
-    setState(() {
-      products.addAll(newProducts);
-      _isLoadingMore = false;
-    });
+  Future<void> _refreshProducts() async {
+    await _fetchProducts(showLoader: false);
   }
 
-  void _openProductDetails(Map<String, String> product, int index) {
-    final String seed = product['name']!
+  void _openProductDetails(ProductItem product, int index) {
+    final String seed = product.name
         .toLowerCase()
         .replaceAll(' ', '_')
         .replaceAll(',', '');
@@ -188,12 +208,10 @@ class _MyHomePageState extends State<MyHomePage> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ProductDetailsPage(
-          productName: product['name']!,
-          productPrice: product['price']!,
-          productLocation: product['location']!,
-          productDescription:
-              '${product['name']} in excellent condition. Lightly used and fully functional. '
-              'Pickup available around ${product['location']} or message to arrange delivery.',
+          productName: product.name,
+          productPrice: product.priceLabel,
+          productLocation: product.location,
+          productDescription: product.description,
           imageUrls: gallery,
           sellerName: sellerName,
           sellerAvatarUrl: 'https://i.pravatar.cc/150?img=${(index % 70) + 1}',
@@ -283,30 +301,62 @@ class _MyHomePageState extends State<MyHomePage> {
                     Expanded(
                       child: RefreshIndicator(
                         onRefresh: _refreshProducts,
-                        child: GridView.builder(
-                          controller: _scrollController,
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          itemCount: products.length + (_isLoadingMore ? 2 : 0),
-                          gridDelegate: kProductGridDelegate,
-                          itemBuilder: (context, index) {
-                            if (index >= products.length) {
-                              return const Card(
-                                child: Center(
-                                  child: Padding(
-                                    padding: EdgeInsets.all(24),
-                                    child: CircularProgressIndicator(),
-                                  ),
-                                ),
+                        child: Builder(
+                          builder: (context) {
+                            if (_isLoading) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
                               );
                             }
-                            final product = products[index];
-                            return ProductGridCard(
-                              name: product['name']!,
-                              price: product['price'],
-                              location: product['location']!,
-                              imageUrl: product['image']!,
-                              onTap: () {
-                                _openProductDetails(product, index);
+
+                            if (_loadError != null && _products.isEmpty) {
+                              return ListView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                children: [
+                                  SizedBox(
+                                    height:
+                                        MediaQuery.of(context).size.height *
+                                        0.4,
+                                    child: Center(
+                                      child: Text(
+                                        _loadError!,
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }
+
+                            if (_products.isEmpty) {
+                              return ListView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                children: const [
+                                  SizedBox(
+                                    height: 280,
+                                    child: Center(
+                                      child: Text('No products found.'),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }
+
+                            return GridView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              itemCount: _products.length,
+                              gridDelegate: kProductGridDelegate,
+                              itemBuilder: (context, index) {
+                                final ProductItem product = _products[index];
+                                return ProductGridCard(
+                                  name: product.name,
+                                  price: product.priceLabel,
+                                  location: product.location,
+                                  imageUrl: product.imageUrl,
+                                  onTap: () {
+                                    _openProductDetails(product, index);
+                                  },
+                                );
                               },
                             );
                           },

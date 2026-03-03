@@ -18,7 +18,7 @@ class ChatsPage extends StatelessWidget {
     },
     {
       'seller': 'Noah Reyes',
-      'lastMessage': 'I can lower the price to \$40 if you want it now.',
+      'lastMessage': 'I can lower the price to ₱40 if you want it now.',
       'avatarUrl': 'https://i.pravatar.cc/150?img=3',
     },
     {

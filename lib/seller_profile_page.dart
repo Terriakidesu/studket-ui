@@ -1,4 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
 import 'product_details_page.dart';
 import 'components/product_grid_card.dart';
 import 'components/rating_stars.dart';
@@ -21,26 +27,9 @@ class SellerProfilePage extends StatefulWidget {
 }
 
 class _SellerProfilePageState extends State<SellerProfilePage> {
-  static const List<Map<String, String>> _products = [
-    {
-      'name': 'Wireless Earbuds',
-      'price': '\$59',
-      'location': 'San Francisco, CA',
-      'image': 'https://picsum.photos/seed/seller_earbuds/300',
-    },
-    {
-      'name': 'Laptop Stand',
-      'price': '\$26',
-      'location': 'New York, NY',
-      'image': 'https://picsum.photos/seed/seller_stand/300',
-    },
-    {
-      'name': 'Bluetooth Speaker',
-      'price': '\$47',
-      'location': 'Denver, CO',
-      'image': 'https://picsum.photos/seed/seller_speaker/300',
-    },
-  ];
+  bool _isLoadingProducts = true;
+  String? _productsError;
+  List<_SellerProduct> _products = const <_SellerProduct>[];
 
   final List<_SellerReview> _reviews = <_SellerReview>[
     _SellerReview(
@@ -71,9 +60,65 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
       _reviews.any((review) => review.reviewer.trim().toLowerCase() == 'you');
 
   @override
+  void initState() {
+    super.initState();
+    _fetchSellerProducts();
+  }
+
+  @override
   void dispose() {
     _reviewController.dispose();
     super.dispose();
+  }
+
+  String _apiBaseUrl() {
+    if (kIsWeb) return 'http://localhost:8000/api/v1';
+    if (Platform.isAndroid) return 'http://10.0.2.2:8000/api/v1';
+    return 'http://localhost:8000/api/v1';
+  }
+
+  Future<void> _fetchSellerProducts() async {
+    setState(() {
+      _isLoadingProducts = true;
+      _productsError = null;
+    });
+
+    try {
+      final Uri uri = Uri.parse('${_apiBaseUrl()}/products/');
+      final http.Response response = await http.get(uri);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('HTTP ${response.statusCode}');
+      }
+
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is! List) {
+        throw const FormatException('Products response is not a list');
+      }
+
+      final List<_SellerProduct> parsed = decoded
+          .whereType<Map>()
+          .map(
+            (item) => _SellerProduct.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _products = parsed;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _productsError = 'Failed to load products.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingProducts = false;
+        });
+      }
+    }
   }
 
   void _addReview() {
@@ -218,8 +263,8 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
     });
   }
 
-  void _openProductDetails(Map<String, String> product, int index) {
-    final String seed = product['name']!
+  void _openProductDetails(_SellerProduct product, int index) {
+    final String seed = product.name
         .toLowerCase()
         .replaceAll(' ', '_')
         .replaceAll(',', '');
@@ -231,12 +276,10 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ProductDetailsPage(
-          productName: product['name']!,
-          productPrice: product['price'] ?? '\$0',
-          productLocation: product['location']!,
-          productDescription:
-              '${product['name']} in excellent condition. Lightly used and fully functional. '
-              'Pickup available around ${product['location']} or message to arrange delivery.',
+          productName: product.name,
+          productPrice: product.priceLabel,
+          productLocation: product.location,
+          productDescription: product.description,
           imageUrls: gallery,
           sellerName: widget.sellerName,
           sellerAvatarUrl: widget.sellerAvatarUrl,
@@ -297,18 +340,34 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
             Expanded(
               child: TabBarView(
                 children: [
-                  GridView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _products.length,
-                    gridDelegate: kProductGridDelegate,
-                    itemBuilder: (context, index) {
-                      final item = _products[index];
-                      return ProductGridCard(
-                        name: item['name']!,
-                        price: item['price'],
-                        location: item['location']!,
-                        imageUrl: item['image']!,
-                        onTap: () => _openProductDetails(item, index),
+                  Builder(
+                    builder: (context) {
+                      if (_isLoadingProducts) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      if (_productsError != null && _products.isEmpty) {
+                        return Center(child: Text(_productsError!));
+                      }
+
+                      if (_products.isEmpty) {
+                        return const Center(child: Text('No products found.'));
+                      }
+
+                      return GridView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _products.length,
+                        gridDelegate: kProductGridDelegate,
+                        itemBuilder: (context, index) {
+                          final item = _products[index];
+                          return ProductGridCard(
+                            name: item.name,
+                            price: item.priceLabel,
+                            location: item.location,
+                            imageUrl: item.imageUrl,
+                            onTap: () => _openProductDetails(item, index),
+                          );
+                        },
                       );
                     },
                   ),
@@ -513,5 +572,68 @@ class _SellerReview {
       rating: rating ?? this.rating,
       sellerReply: sellerReply ?? this.sellerReply,
     );
+  }
+}
+
+class _SellerProduct {
+  const _SellerProduct({
+    required this.name,
+    required this.priceLabel,
+    required this.location,
+    required this.imageUrl,
+    required this.description,
+  });
+
+  final String name;
+  final String priceLabel;
+  final String location;
+  final String imageUrl;
+  final String description;
+
+  factory _SellerProduct.fromJson(Map<String, dynamic> json) {
+    final String name = (json['name'] ?? json['title'] ?? 'Untitled Product')
+        .toString();
+    final String location =
+        (json['location'] ?? json['address'] ?? 'Location unavailable')
+            .toString();
+    final String imageUrl =
+        (json['image'] ??
+                json['image_url'] ??
+                json['thumbnail'] ??
+                'https://picsum.photos/seed/default_seller_product/300')
+            .toString();
+    final String description =
+        (json['description'] ??
+                '$name in excellent condition. Message the seller for details.')
+            .toString();
+
+    return _SellerProduct(
+      name: name,
+      priceLabel: _formatPeso(json['price']),
+      location: location,
+      imageUrl: imageUrl,
+      description: description,
+    );
+  }
+
+  static String _formatPeso(dynamic rawPrice) {
+    if (rawPrice is num) {
+      final String amount = rawPrice % 1 == 0
+          ? rawPrice.toStringAsFixed(0)
+          : rawPrice.toStringAsFixed(2);
+      return '₱$amount';
+    }
+
+    final String text = (rawPrice ?? '').toString().trim();
+    if (text.isEmpty) return '₱0';
+
+    final String numeric = text.replaceAll(RegExp(r'[^0-9.]'), '');
+    final num? parsed = num.tryParse(numeric);
+    if (parsed == null) return '₱0';
+
+    final String amount = parsed % 1 == 0
+        ? parsed.toStringAsFixed(0)
+        : parsed.toStringAsFixed(2);
+    return '₱$amount';
   }
 }
