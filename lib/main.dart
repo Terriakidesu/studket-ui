@@ -1,10 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'api_base_url.dart';
+import 'api_routes.dart';
 import 'chats_page.dart';
 import 'components/product_grid_card.dart';
 import 'components/studket_app_bar.dart';
@@ -134,13 +136,6 @@ class _MyHomePageState extends State<MyHomePage> {
     _fetchProducts();
   }
 
-  String _apiBaseUrl() {
-    
-    if (kIsWeb) return 'http://localhost:8088/api/v1';
-    if (Platform.isAndroid) return 'http://10.0.2.2:8088/api/v1';
-    return 'http://localhost:8088/api/v1';
-  }
-
   Future<void> _fetchProducts({bool showLoader = true}) async {
     if (showLoader) {
       setState(() {
@@ -154,8 +149,10 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     try {
-      final Uri uri = Uri.parse('${_apiBaseUrl()}/products/');
-      final http.Response response = await http.get(uri);
+      final Uri uri = ApiRoutes.products(port: 8088);
+      final http.Response response = await http
+          .get(uri)
+          .timeout(kApiRequestTimeout);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('HTTP ${response.statusCode}');
@@ -174,6 +171,11 @@ class _MyHomePageState extends State<MyHomePage> {
       if (!mounted) return;
       setState(() {
         _products = parsed;
+      });
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Request timed out. Pull to refresh and try again.';
       });
     } catch (error) {
       if (!mounted) return;
