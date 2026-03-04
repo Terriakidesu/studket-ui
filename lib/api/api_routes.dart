@@ -7,6 +7,14 @@ class ApiRoutes {
     return _build(path: 'products/');
   }
 
+  static Uri authLogin() {
+    return _build(path: 'auth/login');
+  }
+
+  static Uri authRegister() {
+    return _build(path: 'auth/register');
+  }
+
   static Uri _build({required String path}) {
     final String baseUrl = resolveApiBaseUrl();
     final String normalizedPath = path.startsWith('/') ? path : '/$path';

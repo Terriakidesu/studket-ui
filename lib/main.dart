@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'authentication_page.dart';
+import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
 import 'api/api_routes.dart';
 import 'chats_page.dart';
@@ -27,7 +29,34 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
       ),
-      home: const MyHomePage(title: 'Studket'),
+      home: const AppEntryPage(),
+    );
+  }
+}
+
+class AppEntryPage extends StatefulWidget {
+  const AppEntryPage({super.key});
+
+  @override
+  State<AppEntryPage> createState() => _AppEntryPageState();
+}
+
+class _AppEntryPageState extends State<AppEntryPage> {
+  bool _isAuthenticated = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isAuthenticated) {
+      return const MyHomePage(title: 'Studket');
+    }
+
+    return AuthenticationPage(
+      onAuthenticated: () {
+        if (!mounted) return;
+        setState(() {
+          _isAuthenticated = true;
+        });
+      },
     );
   }
 }
@@ -160,7 +189,7 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       final Uri uri = ApiRoutes.products();
       final http.Response response = await http
-          .get(uri)
+          .get(uri, headers: ApiAuthSession.authHeaders())
           .timeout(kApiRequestTimeout);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {

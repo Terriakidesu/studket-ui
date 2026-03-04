@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
 import 'api/api_routes.dart';
 import 'product_details_page.dart';
@@ -91,7 +92,7 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
     try {
       final Uri uri = ApiRoutes.products();
       final http.Response response = await http
-          .get(uri)
+          .get(uri, headers: ApiAuthSession.authHeaders())
           .timeout(kApiRequestTimeout);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
