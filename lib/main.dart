@@ -5,8 +5,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-import 'api_base_url.dart';
-import 'api_routes.dart';
+import 'api/api_base_url.dart';
+import 'api/api_routes.dart';
 import 'chats_page.dart';
 import 'components/product_grid_card.dart';
 import 'components/studket_app_bar.dart';
@@ -130,6 +130,15 @@ class _MyHomePageState extends State<MyHomePage> {
   String? _loadError;
   List<ProductItem> _products = const <ProductItem>[];
 
+  void _showRequestError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -149,7 +158,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     try {
-      final Uri uri = ApiRoutes.products(port: 8088);
+      final Uri uri = ApiRoutes.products();
       final http.Response response = await http
           .get(uri)
           .timeout(kApiRequestTimeout);
@@ -173,15 +182,43 @@ class _MyHomePageState extends State<MyHomePage> {
         _products = parsed;
       });
     } on TimeoutException {
+      const String message =
+          'Request timed out. Pull to refresh and try again.';
       if (!mounted) return;
       setState(() {
-        _loadError = 'Request timed out. Pull to refresh and try again.';
+        _loadError = message;
       });
+      _showRequestError(message);
+    } on SocketException {
+      const String message =
+          'No internet connection. Check your network and try again.';
+      if (!mounted) return;
+      setState(() {
+        _loadError = message;
+      });
+      _showRequestError(message);
+    } on HttpException catch (error) {
+      final String message = 'Server error (${error.message}). Try again.';
+      if (!mounted) return;
+      setState(() {
+        _loadError = message;
+      });
+      _showRequestError(message);
+    } on FormatException {
+      const String message = 'Invalid server response. Please try again.';
+      if (!mounted) return;
+      setState(() {
+        _loadError = message;
+      });
+      _showRequestError(message);
     } catch (error) {
+      const String message =
+          'Failed to load products. Pull to refresh and try again.';
       if (!mounted) return;
       setState(() {
-        _loadError = 'Failed to load products. Pull to refresh and try again.';
+        _loadError = message;
       });
+      _showRequestError(message);
     } finally {
       if (mounted) {
         setState(() {
