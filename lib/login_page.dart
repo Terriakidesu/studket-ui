@@ -7,9 +7,14 @@ import 'api/auth_api.dart';
 import 'register_page.dart';
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, this.onAuthenticated});
+  const LoginPage({
+    super.key,
+    this.onAuthenticated,
+    this.onSwitchToRegister,
+  });
 
   final VoidCallback? onAuthenticated;
+  final VoidCallback? onSwitchToRegister;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -190,6 +195,10 @@ class _LoginPageState extends State<LoginPage> {
                               onPressed: _isSubmitting
                                   ? null
                                   : () {
+                                      if (widget.onSwitchToRegister != null) {
+                                        widget.onSwitchToRegister!.call();
+                                        return;
+                                      }
                                       Navigator.of(context).pushReplacement(
                                         PageRouteBuilder<void>(
                                           pageBuilder:
