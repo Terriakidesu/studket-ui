@@ -14,6 +14,7 @@ class UserRealtimeConversation {
     required this.otherAccountId,
     required this.otherUsername,
     required this.otherAccountType,
+    this.lastMessageText,
     this.lastMessageAt,
     this.messageCount = 0,
   });
@@ -23,12 +24,14 @@ class UserRealtimeConversation {
   final int? otherAccountId;
   final String otherUsername;
   final String otherAccountType;
+  final String? lastMessageText;
   final DateTime? lastMessageAt;
   final int messageCount;
 
   String get title => otherUsername.isEmpty ? 'Conversation' : otherUsername;
 
   UserRealtimeConversation copyWith({
+    String? lastMessageText,
     DateTime? lastMessageAt,
     int? messageCount,
   }) {
@@ -38,6 +41,7 @@ class UserRealtimeConversation {
       otherAccountId: otherAccountId,
       otherUsername: otherUsername,
       otherAccountType: otherAccountType,
+      lastMessageText: lastMessageText ?? this.lastMessageText,
       lastMessageAt: lastMessageAt ?? this.lastMessageAt,
       messageCount: messageCount ?? this.messageCount,
     );
@@ -50,6 +54,11 @@ class UserRealtimeConversation {
       otherAccountId: _asInt(json['other_account_id']),
       otherUsername: _asString(json['other_username'], 'Conversation'),
       otherAccountType: _asString(json['other_account_type'], 'user'),
+      lastMessageText:
+          _asNullableString(json['last_message_text']) ??
+          _asNullableString(json['last_message']) ??
+          _asNullableString(json['latest_message_text']) ??
+          _asNullableString(json['latest_message']),
       lastMessageAt: _asDateTime(json['last_message_at']),
       messageCount: _asInt(json['message_count']) ?? 0,
     );
@@ -123,6 +132,7 @@ class UserRealtimeMessage {
     required this.messageText,
     required this.isRead,
     required this.sentAt,
+    required this.receivedSequence,
   });
 
   final int messageId;
@@ -132,10 +142,14 @@ class UserRealtimeMessage {
   final String messageText;
   final bool isRead;
   final DateTime? sentAt;
+  final int receivedSequence;
 
   bool get isMine => senderId != null && senderId == ApiAuthSession.accountId;
 
-  factory UserRealtimeMessage.fromJson(Map<String, dynamic> json) {
+  factory UserRealtimeMessage.fromJson(
+    Map<String, dynamic> json, {
+    required int receivedSequence,
+  }) {
     return UserRealtimeMessage(
       messageId: _asInt(json['message_id']) ?? 0,
       conversationId: _asInt(json['conversation_id']) ?? 0,
@@ -144,6 +158,7 @@ class UserRealtimeMessage {
       messageText: _asString(json['message_text'], ''),
       isRead: json['is_read'] == true,
       sentAt: _asDateTime(json['sent_at']),
+      receivedSequence: receivedSequence,
     );
   }
 }
@@ -166,6 +181,9 @@ class UserRealtimeService extends ChangeNotifier {
       <UserRealtimeNotification>[];
   final Map<int, List<UserRealtimeMessage>> _messages =
       <int, List<UserRealtimeMessage>>{};
+  final Set<int> _conversationsWithNewMessages = <int>{};
+  int _messageSequence = 0;
+  int? _activeConversationId;
 
   bool get isConnecting => _isConnecting;
   bool get isConnected => _isConnected;
@@ -175,11 +193,30 @@ class UserRealtimeService extends ChangeNotifier {
       List<UserRealtimeConversation>.unmodifiable(_conversations);
   List<UserRealtimeNotification> get notifications =>
       List<UserRealtimeNotification>.unmodifiable(_notifications);
+  int get newMessageConversationCount => _conversationsWithNewMessages.length;
 
   List<UserRealtimeMessage> messagesFor(int conversationId) {
     return List<UserRealtimeMessage>.unmodifiable(
       _messages[conversationId] ?? const <UserRealtimeMessage>[],
     );
+  }
+
+  bool hasNewMessage(int conversationId) {
+    return _conversationsWithNewMessages.contains(conversationId);
+  }
+
+  void openConversation(int conversationId) {
+    _activeConversationId = conversationId;
+    final bool removed = _conversationsWithNewMessages.remove(conversationId);
+    if (removed) {
+      notifyListeners();
+    }
+  }
+
+  void closeConversation(int conversationId) {
+    if (_activeConversationId == conversationId) {
+      _activeConversationId = null;
+    }
   }
 
   Future<void> ensureConnected() async {
@@ -241,6 +278,9 @@ class UserRealtimeService extends ChangeNotifier {
       _conversations.clear();
       _notifications.clear();
       _messages.clear();
+      _conversationsWithNewMessages.clear();
+      _messageSequence = 0;
+      _activeConversationId = null;
       _connectedAccountId = null;
       _lastPongAt = null;
       _error = null;
@@ -302,7 +342,12 @@ class UserRealtimeService extends ChangeNotifier {
       case 'chat.message':
         final dynamic messageJson = decoded['message'];
         if (messageJson is Map<String, dynamic>) {
-          _addMessage(UserRealtimeMessage.fromJson(messageJson));
+          _addMessage(
+            UserRealtimeMessage.fromJson(
+              messageJson,
+              receivedSequence: ++_messageSequence,
+            ),
+          );
         }
         return;
       case 'notification.created':
@@ -343,6 +388,7 @@ class UserRealtimeService extends ChangeNotifier {
             .whereType<Map<String, dynamic>>()
             .map(UserRealtimeConversation.fromJson),
       );
+    _conversations.sort(_compareConversationsByLatest);
 
     _notifications
       ..clear()
@@ -370,12 +416,17 @@ class UserRealtimeService extends ChangeNotifier {
     if (conversationIndex >= 0) {
       final UserRealtimeConversation updated = _conversations[conversationIndex]
           .copyWith(
+            lastMessageText: message.messageText,
             lastMessageAt: message.sentAt,
             messageCount: _conversations[conversationIndex].messageCount + 1,
           );
       _conversations
         ..removeAt(conversationIndex)
         ..insert(0, updated);
+    }
+
+    if (!message.isMine && _activeConversationId != message.conversationId) {
+      _conversationsWithNewMessages.add(message.conversationId);
     }
 
     notifyListeners();
@@ -400,6 +451,15 @@ class UserRealtimeService extends ChangeNotifier {
   }
 }
 
+int _compareConversationsByLatest(
+  UserRealtimeConversation a,
+  UserRealtimeConversation b,
+) {
+  final DateTime aTime = a.lastMessageAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+  final DateTime bTime = b.lastMessageAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+  return bTime.compareTo(aTime);
+}
+
 int? _asInt(dynamic value) {
   if (value is int) {
     return value;
@@ -415,9 +475,14 @@ String _asString(dynamic value, String fallback) {
   return text.isEmpty ? fallback : text;
 }
 
+String? _asNullableString(dynamic value) {
+  final String text = (value ?? '').toString().trim();
+  return text.isEmpty ? null : text;
+}
+
 DateTime? _asDateTime(dynamic value) {
   if (value == null) {
     return null;
   }
-  return DateTime.tryParse(value.toString());
+  return DateTime.tryParse(value.toString())?.toLocal();
 }
