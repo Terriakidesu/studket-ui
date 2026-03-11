@@ -36,7 +36,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   cached_network_image: ^3.4.1
   file_picker: ^10.3.2
+  flutter_svg: ^2.2.0
   http: ^1.5.0
+  image_cropper: ^9.1.0
+  image_picker: ^1.2.0
   shared_preferences: ^2.5.3
   flutter_local_notifications: ^19.4.2
 

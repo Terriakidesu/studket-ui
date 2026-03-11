@@ -17,9 +17,6 @@ class ListingsApi {
     required String listingType,
     num? price,
     String? condition,
-    int? quantityAvailable,
-    int? maxDailyLimit,
-    bool? restockable,
     List<String> tags = const <String>[],
   }) async {
     final int? accountId = ApiAuthSession.accountId;
@@ -29,7 +26,7 @@ class ListingsApi {
 
     final String? normalizedCondition = condition?.trim();
     final Map<String, dynamic> payload = <String, dynamic>{
-      'seller_id': accountId,
+      'owner_id': accountId,
       'title': title.trim(),
       'description': description.trim(),
       'listing_type': listingType,
@@ -43,15 +40,6 @@ class ListingsApi {
     }
     if (tags.isNotEmpty) {
       payload['tags'] = tags;
-    }
-    if (quantityAvailable != null) {
-      payload['quantity_available'] = quantityAvailable;
-    }
-    if (maxDailyLimit != null) {
-      payload['max_daily_limit'] = maxDailyLimit;
-    }
-    if (restockable != null) {
-      payload['restockable'] = restockable;
     }
 
     final http.Response response = await http

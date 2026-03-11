@@ -2,12 +2,16 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:image_picker/image_picker.dart';
 
+import 'app_entry_page.dart';
 import 'api/api_auth_session.dart';
+import 'api/profile_picture_api.dart';
 import 'api/api_session_storage.dart';
 import 'api/auth_api.dart';
 import 'api/user_realtime_service.dart';
-import 'authentication_page.dart';
+import 'components/account_avatar.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
@@ -17,8 +21,11 @@ class UserProfilePage extends StatefulWidget {
 }
 
 class _UserProfilePageState extends State<UserProfilePage> {
+  final ImagePicker _imagePicker = ImagePicker();
+
   bool _isElevatingSeller = false;
   bool _isSubmittingTrustedSellerRequest = false;
+  bool _isUploadingProfilePicture = false;
   bool _isLoggingOut = false;
 
   void _showMessage(String message) {
@@ -100,11 +107,125 @@ class _UserProfilePageState extends State<UserProfilePage> {
     }
 
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (_) => AuthenticationPage(onAuthenticated: () {}),
-      ),
+      MaterialPageRoute(builder: (_) => const AppEntryPage()),
       (Route<dynamic> route) => false,
     );
+  }
+
+  Future<void> _showProfilePictureActions() async {
+    if (_isUploadingProfilePicture) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.photo_camera_outlined),
+                  title: const Text('Take Photo'),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await _pickAndUploadProfilePicture(ImageSource.camera);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text('Upload from Gallery'),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await _pickAndUploadProfilePicture(ImageSource.gallery);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickAndUploadProfilePicture(ImageSource source) async {
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null || _isUploadingProfilePicture) {
+      return;
+    }
+
+    try {
+      final XFile? picked = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 1600,
+        imageQuality: 92,
+      );
+      if (picked == null) {
+        return;
+      }
+
+      final CroppedFile? cropped = await ImageCropper().cropImage(
+        sourcePath: picked.path,
+        aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+        uiSettings: <PlatformUiSettings>[
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Profile Picture',
+            toolbarColor: const Color(0xFF5865F2),
+            toolbarWidgetColor: Colors.white,
+            statusBarColor: const Color(0xFF5865F2),
+            activeControlsWidgetColor: const Color(0xFF5865F2),
+            initAspectRatio: CropAspectRatioPreset.square,
+            lockAspectRatio: true,
+            hideBottomControls: false,
+            cropStyle: CropStyle.rectangle,
+          ),
+          IOSUiSettings(
+            title: 'Crop Profile Picture',
+            aspectRatioLockEnabled: true,
+            resetAspectRatioEnabled: false,
+            aspectRatioPickerButtonHidden: true,
+            rotateButtonsHidden: false,
+            rotateClockwiseButtonHidden: false,
+            cropStyle: CropStyle.rectangle,
+          ),
+        ],
+      );
+      if (cropped == null) {
+        return;
+      }
+
+      setState(() {
+        _isUploadingProfilePicture = true;
+      });
+
+      await ProfilePictureApi.uploadForAccount(
+        accountId: accountId,
+        file: File(cropped.path),
+      );
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+      _showMessage('Profile picture updated.');
+    } on TimeoutException {
+      _showMessage('Profile picture upload timed out.');
+    } on SocketException {
+      _showMessage('Could not connect to the profile picture service.');
+    } on HttpException catch (error) {
+      _showMessage(error.message);
+    } catch (_) {
+      _showMessage('Failed to update profile picture.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingProfilePicture = false;
+        });
+      }
+    }
   }
 
   @override
@@ -116,8 +237,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final String marketplaceRole = ApiAuthSession.marketplaceRole ?? 'buyer';
     final bool isSeller = ApiAuthSession.isSeller;
     final bool isTrustedSeller = ApiAuthSession.trustedSeller;
-    final String avatarUrl =
-        'https://i.pravatar.cc/300?img=${((ApiAuthSession.accountId ?? 21) % 70) + 1}';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF2F3F5),
@@ -161,10 +280,47 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             ),
                           ],
                         ),
-                        child: CircleAvatar(
-                          radius: 42,
-                          backgroundColor: const Color(0xFF1E1F22),
-                          backgroundImage: NetworkImage(avatarUrl),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            AccountAvatar(
+                              accountId: ApiAuthSession.accountId,
+                              radius: 42,
+                              backgroundColor: const Color(0xFF1E1F22),
+                              label: username,
+                            ),
+                            Positioned(
+                              right: -2,
+                              bottom: -2,
+                              child: Material(
+                                color: const Color(0xFF5865F2),
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: _isUploadingProfilePicture
+                                      ? null
+                                      : _showProfilePictureActions,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: _isUploadingProfilePicture
+                                        ? const SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : const Icon(
+                                            Icons.camera_alt_outlined,
+                                            size: 14,
+                                            color: Colors.white,
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
