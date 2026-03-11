@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'chats_page.dart';
 import 'seller_profile_page.dart';
 import 'network_cached_image.dart';
 import 'components/rating_stars.dart';
 import 'components/studket_app_bar.dart';
+import 'api/api_base_url.dart';
 
 class ProductDetailsPage extends StatefulWidget {
   const ProductDetailsPage({
     super.key,
     required this.listingId,
+    this.listingType,
+    this.shareToken,
+    this.shareUrl,
     required this.productName,
     required this.productPrice,
     required this.productLocation,
@@ -21,6 +26,9 @@ class ProductDetailsPage extends StatefulWidget {
   });
 
   final int listingId;
+  final String? listingType;
+  final String? shareToken;
+  final String? shareUrl;
   final String productName;
   final String productPrice;
   final String productLocation;
@@ -39,13 +47,59 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
   int _currentImageIndex = 0;
 
   bool get _hasImages => widget.imageUrls.isNotEmpty;
+  bool get _isLookingFor =>
+      (widget.listingType ?? '').trim().toLowerCase() == 'looking_for';
 
   bool get _hasSellerAvatar => widget.sellerAvatarUrl.trim().isNotEmpty;
+
+  String? get _resolvedShareUrl {
+    final String directUrl = (widget.shareUrl ?? '').trim();
+    if (directUrl.isNotEmpty) {
+      return directUrl;
+    }
+    final String token = (widget.shareToken ?? '').trim();
+    if (token.isEmpty) {
+      return null;
+    }
+    final Uri apiUri = Uri.parse(resolveApiBaseUrl());
+    final Uri originUri = apiUri.replace(
+      path: '/',
+      query: null,
+      fragment: null,
+    );
+    return originUri.resolve('/share/$token').toString();
+  }
+
+  Future<void> _copyShareUrl() async {
+    final String? shareUrl = _resolvedShareUrl;
+    if (shareUrl == null || shareUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This listing does not have a share link yet.')),
+      );
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: shareUrl));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Share link copied to clipboard.')),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const StudketAppBar(title: 'Listing'),
+      appBar: StudketAppBar(
+        title: 'Listing',
+        actions: [
+          IconButton(
+            tooltip: 'Copy share link',
+            onPressed: _copyShareUrl,
+            icon: const Icon(Icons.share_outlined),
+          ),
+        ],
+      ),
       bottomNavigationBar: Padding(
         padding: EdgeInsets.fromLTRB(
           16,
@@ -119,54 +173,56 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            AspectRatio(
-              aspectRatio: 1,
-              child: _hasImages
-                  ? PageView.builder(
-                      itemCount: widget.imageUrls.length,
-                      onPageChanged: (index) {
-                        setState(() {
-                          _currentImageIndex = index;
-                        });
-                      },
-                      itemBuilder: (context, index) {
-                        return NetworkCachedImage(
-                          imageUrl: widget.imageUrls[index],
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                        );
-                      },
-                    )
-                  : Container(
-                      color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.image_outlined,
-                        size: 56,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+            if (!_isLookingFor) ...[
+              AspectRatio(
+                aspectRatio: 1,
+                child: _hasImages
+                    ? PageView.builder(
+                        itemCount: widget.imageUrls.length,
+                        onPageChanged: (index) {
+                          setState(() {
+                            _currentImageIndex = index;
+                          });
+                        },
+                        itemBuilder: (context, index) {
+                          return NetworkCachedImage(
+                            imageUrl: widget.imageUrls[index],
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                          );
+                        },
+                      )
+                    : Container(
+                        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.image_outlined,
+                          size: 56,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
-                    ),
-            ),
-            const SizedBox(height: 10),
-            if (_hasImages)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(widget.imageUrls.length, (index) {
-                  final bool isActive = index == _currentImageIndex;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: isActive ? 18 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: isActive
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.grey[300],
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  );
-                }),
               ),
+              const SizedBox(height: 10),
+              if (_hasImages)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(widget.imageUrls.length, (index) {
+                    final bool isActive = index == _currentImageIndex;
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      width: isActive ? 18 : 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: isActive
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey[300],
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    );
+                  }),
+                ),
+            ],
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Column(

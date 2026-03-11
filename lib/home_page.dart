@@ -231,7 +231,7 @@ class _MyHomePageState extends State<MyHomePage> {
   int get _chatBadgeCount => _realtime.newMessageConversationCount;
 
   bool get _showSellerPostButton =>
-      currentPageIndex == 0 && ApiAuthSession.isSeller;
+      currentPageIndex == 0 && ApiAuthSession.accountId != null;
 
   Future<void> _showSellerPostActions() async {
     await showModalBottomSheet<void>(
@@ -253,41 +253,44 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Posting is available only for seller accounts.',
+                  ApiAuthSession.isSeller
+                      ? 'Create either a sale listing or a looking for post.'
+                      : 'You can create a looking for post now. Sale listings require seller access.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                 ),
                 const SizedBox(height: 16),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const CircleAvatar(
-                    child: Icon(Icons.sell_outlined),
-                  ),
-                  title: const Text('Create Listing'),
-                  subtitle: const Text(
-                    'Post an item for sale as a seller account.',
-                  ),
-                  onTap: () async {
-                    Navigator.of(context).pop();
-                    final ListingEditorResult? created =
-                        await Navigator.of(this.context)
-                            .push<ListingEditorResult>(
-                      MaterialPageRoute(
-                        builder: (_) => const ListingEditorPage(),
-                      ),
-                    );
-                    if (created == ListingEditorResult.updated) {
-                      await _fetchFeed();
-                      if (!mounted) {
-                        return;
-                      }
-                      ScaffoldMessenger.of(this.context).showSnackBar(
-                        const SnackBar(content: Text('Listing posted.')),
+                if (ApiAuthSession.isSeller)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const CircleAvatar(
+                      child: Icon(Icons.sell_outlined),
+                    ),
+                    title: const Text('Create Listing'),
+                    subtitle: const Text(
+                      'Post an item for sale as a seller account.',
+                    ),
+                    onTap: () async {
+                      Navigator.of(context).pop();
+                      final ListingEditorResult? created =
+                          await Navigator.of(this.context)
+                              .push<ListingEditorResult>(
+                        MaterialPageRoute(
+                          builder: (_) => const ListingEditorPage(),
+                        ),
                       );
-                    }
-                  },
-                ),
+                      if (created == ListingEditorResult.updated) {
+                        await _fetchFeed();
+                        if (!mounted) {
+                          return;
+                        }
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Listing posted.')),
+                        );
+                      }
+                    },
+                  ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const CircleAvatar(
@@ -295,7 +298,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   title: const Text('Create Looking For Post'),
                   subtitle: const Text(
-                    'Post a buyer demand request under your seller account.',
+                    'Post a buyer demand request for something you need.',
                   ),
                   onTap: () async {
                     Navigator.of(context).pop();
@@ -638,90 +641,117 @@ class _MyHomePageState extends State<MyHomePage> {
   Widget _buildListingCard(BuildContext context, FeedListing item) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.title,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _formatPrice(item.price),
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              color: Theme.of(context).colorScheme.primary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                Chip(
-                  label: Text(item.status),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ProductDetailsPage(
+                listingId: item.id,
+                listingType: item.listingType,
+                shareToken: item.shareToken,
+                shareUrl: item.shareUrl,
+                productName: item.title,
+                productPrice: _formatPrice(item.price),
+                productLocation: item.campus,
+                productDescription: item.description.isEmpty
+                    ? 'No description provided.'
+                    : item.description,
+                imageUrls: item.imageUrls,
+                sellerName: item.sellerUsername,
+                sellerAccountId: item.ownerId,
+                sellerAvatarUrl: item.sellerAvatarUrl ?? '',
+                sellerRating:
+                    (item.sellerAverageRating as num?)?.toDouble() ?? 0,
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              item.description.isEmpty
-                  ? 'No description provided.'
-                  : item.description,
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _MetaPill(icon: Icons.storefront, label: item.sellerUsername),
-                _MetaPill(
-                  icon: Icons.location_on_outlined,
-                  label: item.campus,
-                ),
-                _MetaPill(
-                  icon: Icons.category_outlined,
-                  label: item.listingType,
-                ),
-                if (item.sellerAverageRating != null)
-                  _MetaPill(
-                    icon: Icons.star_outline,
-                    label:
-                        '${item.sellerAverageRating} (${item.sellerReviewCount})',
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatPrice(item.price),
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ],
+                    ),
                   ),
-                if (item.sellerIsTrusted)
-                  const _MetaPill(
-                    icon: Icons.verified,
-                    label: 'Trusted seller',
+                  Chip(
+                    label: Text(item.status),
+                    visualDensity: VisualDensity.compact,
                   ),
-              ],
-            ),
-            if (item.tags.isNotEmpty) ...[
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                item.description.isEmpty
+                    ? 'No description provided.'
+                    : item.description,
+              ),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: item.tags
-                    .map(
-                      (String tag) => Chip(
-                        label: Text(tag),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    )
-                    .toList(growable: false),
+                children: [
+                  _MetaPill(icon: Icons.storefront, label: item.sellerUsername),
+                  _MetaPill(
+                    icon: Icons.location_on_outlined,
+                    label: item.campus,
+                  ),
+                  _MetaPill(
+                    icon: Icons.category_outlined,
+                    label: item.listingType,
+                  ),
+                  if (item.sellerAverageRating != null)
+                    _MetaPill(
+                      icon: Icons.star_outline,
+                      label:
+                          '${item.sellerAverageRating} (${item.sellerReviewCount})',
+                    ),
+                  if (item.sellerIsTrusted)
+                    const _MetaPill(
+                      icon: Icons.verified,
+                      label: 'Trusted seller',
+                    ),
+                ],
               ),
+              if (item.tags.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: item.tags
+                      .map(
+                        (String tag) => Chip(
+                          label: Text(tag),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -752,6 +782,9 @@ class _MyHomePageState extends State<MyHomePage> {
               MaterialPageRoute(
                 builder: (_) => ProductDetailsPage(
                   listingId: item.id,
+                  listingType: item.listingType,
+                  shareToken: item.shareToken,
+                  shareUrl: item.shareUrl,
                   productName: item.title,
                   productPrice: _formatPrice(item.price),
                   productLocation: item.campus,

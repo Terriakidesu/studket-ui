@@ -831,6 +831,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
 class _ProfileListing {
   const _ProfileListing({
     required this.id,
+    required this.shareToken,
+    required this.shareUrl,
     required this.title,
     required this.description,
     required this.listingType,
@@ -844,6 +846,8 @@ class _ProfileListing {
   });
 
   final int id;
+  final String? shareToken;
+  final String? shareUrl;
   final String title;
   final String description;
   final String listingType;
@@ -860,6 +864,10 @@ class _ProfileListing {
       id: (json['listing_id'] as num?)?.toInt() ??
           (json['id'] as num?)?.toInt() ??
           0,
+      shareToken: (json['share_token'] ?? '').toString().trim().isEmpty
+          ? null
+          : (json['share_token'] ?? '').toString().trim(),
+      shareUrl: normalizeApiAssetUrl((json['share_url'] ?? '').toString()),
       title: (json['title'] ?? 'Untitled Listing').toString(),
       description: (json['description'] ?? '').toString(),
       listingType: (json['listing_type'] ?? 'listing').toString(),

@@ -31,8 +31,20 @@ class ApiRoutes {
     return _build(path: 'transactions/');
   }
 
+  static Uri transactionsNoSlash() {
+    return _build(path: 'transactions');
+  }
+
   static Uri transactionQr() {
     return _build(path: 'transaction-qr/');
+  }
+
+  static Uri transactionQrGenerate() {
+    return _build(path: 'transaction-qr/generate');
+  }
+
+  static Uri transactionQrConfirm() {
+    return _build(path: 'transaction-qr/confirm');
   }
 
   static Uri listings() {
@@ -50,6 +62,14 @@ class ApiRoutes {
         if (accountId != null) 'account_id': '$accountId',
       },
     );
+  }
+
+  static Uri acceptListingInquiry(int listingId, int inquiryId) {
+    return _build(path: 'listings/$listingId/inquiries/$inquiryId/accept');
+  }
+
+  static Uri rejectListingInquiry(int listingId, int inquiryId) {
+    return _build(path: 'listings/$listingId/inquiries/$inquiryId/reject');
   }
 
   static Uri listingsForUser(int accountId) {

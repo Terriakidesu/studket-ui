@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
@@ -25,6 +25,10 @@ class _ChatsPageState extends State<ChatsPage> {
   final UserRealtimeService _realtime = UserRealtimeService.instance;
   Map<int, _ApiMessage> _latestMessagesByConversation =
       <int, _ApiMessage>{};
+  int _lastRealtimeConversationCount = 0;
+  int _lastRealtimeNotificationCount = 0;
+  int _lastRealtimeNewMessageCount = 0;
+  bool _isReloadingPreviews = false;
 
   void _openOtherUserProfile({
     required String name,
@@ -44,11 +48,38 @@ class _ChatsPageState extends State<ChatsPage> {
   @override
   void initState() {
     super.initState();
+    _realtime.addListener(_handleRealtimeChanged);
     unawaited(_realtime.ensureConnected());
     unawaited(_loadConversationPreviews());
   }
 
+  @override
+  void dispose() {
+    _realtime.removeListener(_handleRealtimeChanged);
+    super.dispose();
+  }
+
+  void _handleRealtimeChanged() {
+    final int conversationCount = _realtime.conversations.length;
+    final int notificationCount = _realtime.notifications.length;
+    final int newMessageCount = _realtime.newMessageConversationCount;
+    final bool shouldReload =
+        conversationCount != _lastRealtimeConversationCount ||
+        notificationCount != _lastRealtimeNotificationCount ||
+        newMessageCount != _lastRealtimeNewMessageCount;
+    _lastRealtimeConversationCount = conversationCount;
+    _lastRealtimeNotificationCount = notificationCount;
+    _lastRealtimeNewMessageCount = newMessageCount;
+    if (shouldReload) {
+      unawaited(_loadConversationPreviews());
+    }
+  }
+
   Future<void> _loadConversationPreviews() async {
+    if (_isReloadingPreviews) {
+      return;
+    }
+    _isReloadingPreviews = true;
     try {
       final http.Response response = await http
           .get(
@@ -91,7 +122,10 @@ class _ChatsPageState extends State<ChatsPage> {
       setState(() {
         _latestMessagesByConversation = latestByConversation;
       });
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isReloadingPreviews = false;
+    }
   }
 
   @override
@@ -102,7 +136,9 @@ class _ChatsPageState extends State<ChatsPage> {
       body: AnimatedBuilder(
         animation: _realtime,
         builder: (BuildContext context, _) {
-          if (_realtime.conversations.isEmpty) {
+          final List<UserRealtimeConversation> conversations =
+              _visibleConversations();
+          if (conversations.isEmpty) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -118,12 +154,11 @@ class _ChatsPageState extends State<ChatsPage> {
           }
 
           return ListView.separated(
-            itemCount: _realtime.conversations.length,
+            itemCount: conversations.length,
             separatorBuilder: (_, _) =>
                 Divider(height: 1, color: colorScheme.outlineVariant),
             itemBuilder: (BuildContext context, int index) {
-              final UserRealtimeConversation conversation =
-                  _realtime.conversations[index];
+              final UserRealtimeConversation conversation = conversations[index];
               final int avatarAccountId =
                   conversation.otherAccountId ?? conversation.conversationId;
               final bool hasNewMessage = _realtime.hasNewMessage(
@@ -307,6 +342,54 @@ class _ChatsPageState extends State<ChatsPage> {
         normalized == 'management' ||
         normalized == 'superadmin';
   }
+
+  List<UserRealtimeConversation> _visibleConversations() {
+    final List<UserRealtimeConversation> merged =
+        List<UserRealtimeConversation>.from(_realtime.conversations);
+    final Set<int> knownIds = merged
+        .map((UserRealtimeConversation item) => item.conversationId)
+        .toSet();
+    _latestMessagesByConversation.forEach((int conversationId, _ApiMessage message) {
+      if (knownIds.contains(conversationId)) {
+        return;
+      }
+      final bool isMine =
+          message.senderId != null && message.senderId == ApiAuthSession.accountId;
+      merged.add(
+        UserRealtimeConversation(
+          conversationId: conversationId,
+          conversationType: 'conversation',
+          otherAccountId: isMine ? null : message.senderId,
+          otherUsername: isMine
+              ? 'Conversation'
+              : (message.senderUsername?.trim().isNotEmpty == true
+                  ? message.senderUsername!.trim()
+                  : 'Conversation'),
+          otherAccountType: 'user',
+          lastMessageText: message.messageText,
+          lastMessageAt: message.sentAt,
+          messageCount: 1,
+        ),
+      );
+    });
+    merged.sort(_compareConversationsByLatest);
+    return merged;
+  }
+
+  int _compareConversationsByLatest(
+    UserRealtimeConversation a,
+    UserRealtimeConversation b,
+  ) {
+    final DateTime aTime =
+        a.lastMessageAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final DateTime bTime =
+        b.lastMessageAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final int byTime = bTime.compareTo(aTime);
+    if (byTime != 0) {
+      return byTime;
+    }
+    return b.conversationId.compareTo(a.conversationId);
+  }
 }
 
 class ChatThreadPage extends StatefulWidget {
@@ -357,10 +440,14 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   static const String _offerRejectedMessagePrefix = '[studket_offer_rejected]';
   static const String _qrConfirmationStartedMessagePrefix =
       '[studket_qr_confirmation_started]';
+  static const String _transactionCompletedMessagePrefix =
+      '[studket_transaction_completed]';
 
   final UserRealtimeService _realtime = UserRealtimeService.instance;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final MobileScannerController _qrScannerController =
+      MobileScannerController();
   Timer? _typingDebounce;
   bool _isSendingTyping = false;
 
@@ -372,6 +459,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   int _lastRenderedMessageCount = 0;
   int? _activeConversationId;
   bool _hasSentInitialInquiry = false;
+  bool _isConfirmingQr = false;
+  bool _hasHandledScan = false;
+  final Set<String> _consumedQrTokens = <String>{};
 
   @override
   void initState() {
@@ -411,6 +501,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     if (_activeConversationId != null) {
       _realtime.closeConversation(_activeConversationId!);
     }
+    _qrScannerController.dispose();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -540,7 +631,15 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
       }
 
       setState(() {
-        _resolvedInquiry = inquiry;
+        _resolvedInquiry = inquiry == null
+            ? null
+            : _ResolvedInquiryPreview(
+                inquiryId: inquiry.inquiryId,
+                product: _enrichInquiryProduct(inquiry.product),
+                buyerAccountId: inquiry.buyerAccountId,
+                isMine: inquiry.isMine,
+                status: inquiry.status,
+              );
       });
     } catch (_) {}
   }
@@ -568,9 +667,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         }
         setState(() {
           _isStartingConversation = false;
-          _hasSentInitialInquiry = true;
+          _hasSentInitialInquiry = false;
         });
-        _bindConversation(conversationId);
+        _bindConversation(conversationId, sendInitialInquiry: true);
         return;
       }
 
@@ -789,12 +888,14 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     await _acceptResolvedInquiryOffer(
       product: inquiryMessage.inquiryProduct,
       buyerAccountId: inquiryMessage.senderAccountId,
+      inquiryId: _resolveInquiryIdForProduct(inquiryMessage.inquiryProduct),
     );
   }
 
   Future<void> _acceptResolvedInquiryOffer({
     required InquiryProductData? product,
     required int? buyerAccountId,
+    required int? inquiryId,
   }) async {
     final int? conversationId = _activeConversationId;
     if (conversationId == null) {
@@ -806,7 +907,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         sellerAccountId == null ||
         sellerAccountId <= 0 ||
         buyerAccountId == null ||
-        buyerAccountId <= 0) {
+        buyerAccountId <= 0 ||
+        inquiryId == null ||
+        inquiryId <= 0) {
       if (!mounted) {
         return;
       }
@@ -819,6 +922,11 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     }
 
     try {
+      await _acceptListingInquiry(
+        listingId: product.listingId,
+        inquiryId: inquiryId,
+        accountId: sellerAccountId,
+      );
       final QrConfirmationData qrConfirmation = await _startQrConfirmation(
         product: product,
         buyerAccountId: buyerAccountId,
@@ -833,7 +941,21 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         messageText: _serializeQrConfirmationStartedMessage(qrConfirmation),
       );
       if (mounted) {
-        _showQrConfirmationDialog(qrConfirmation);
+        setState(() {
+          final _ResolvedInquiryPreview? resolvedInquiry = _resolvedInquiry;
+          if (resolvedInquiry != null && resolvedInquiry.inquiryId == inquiryId) {
+            _resolvedInquiry = _ResolvedInquiryPreview(
+              inquiryId: resolvedInquiry.inquiryId,
+              product: resolvedInquiry.product,
+              buyerAccountId: resolvedInquiry.buyerAccountId,
+              isMine: resolvedInquiry.isMine,
+              status: 'accepted',
+            );
+          }
+        });
+      }
+      if (mounted) {
+        _showQrConfirmationDialog(qrConfirmation, isMine: true);
       }
       _scheduleScrollToBottom();
     } on TimeoutException {
@@ -874,16 +996,65 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   }
 
   Future<void> _rejectInquiryOffer(InquiryProductData product) async {
-    final int? conversationId = _activeConversationId;
-    if (conversationId == null) {
+    final int? sellerAccountId = ApiAuthSession.accountId;
+    final int? inquiryId = _resolveInquiryIdForProduct(product);
+    if (sellerAccountId == null ||
+        sellerAccountId <= 0 ||
+        inquiryId == null ||
+        inquiryId <= 0) {
       return;
     }
 
-    await _realtime.sendMessage(
-      conversationId: conversationId,
-      messageText: _serializeRejectedOfferMessage(product),
-    );
-    _scheduleScrollToBottom();
+    try {
+      await _rejectListingInquiry(
+        listingId: product.listingId,
+        inquiryId: inquiryId,
+        accountId: sellerAccountId,
+      );
+      final int? conversationId = _activeConversationId;
+      if (conversationId != null) {
+        await _realtime.sendMessage(
+          conversationId: conversationId,
+          messageText: _serializeRejectedOfferMessage(product),
+        );
+        if (mounted) {
+          setState(() {
+            final _ResolvedInquiryPreview? resolvedInquiry = _resolvedInquiry;
+            if (resolvedInquiry != null && resolvedInquiry.inquiryId == inquiryId) {
+              _resolvedInquiry = _ResolvedInquiryPreview(
+                inquiryId: resolvedInquiry.inquiryId,
+                product: resolvedInquiry.product,
+                buyerAccountId: resolvedInquiry.buyerAccountId,
+                isMine: resolvedInquiry.isMine,
+                status: 'rejected',
+              );
+            }
+          });
+        }
+        _scheduleScrollToBottom();
+      }
+    } on TimeoutException {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Rejecting this inquiry timed out.')),
+      );
+    } on SocketException {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not connect to reject this inquiry.')),
+      );
+    } on HttpException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    }
   }
 
   String _extractErrorMessage(http.Response response) {
@@ -997,7 +1168,58 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         }
         return a.sortOrder.compareTo(b.sortOrder);
       });
-    return timeline;
+    final Set<int> completedTransactionIds = _realtime.notifications
+        .where(
+          (UserRealtimeNotification notification) =>
+              notification.notificationType.trim().toLowerCase() ==
+                  'transaction_completed' &&
+              (notification.relatedEntityType ?? '').trim().toLowerCase() ==
+                  'transaction' &&
+              (notification.relatedEntityId ?? 0) > 0,
+        )
+        .map(
+          (UserRealtimeNotification notification) =>
+              notification.relatedEntityId!,
+        )
+        .toSet();
+    final Set<String> completedQrTokens = timeline
+        .where(
+          (_TimelineMessage message) => message.completedQrConfirmation != null,
+        )
+        .map(
+          (_TimelineMessage message) => message.completedQrConfirmation!.qrToken,
+        )
+        .toSet();
+    return timeline
+        .map((_TimelineMessage message) {
+          final QrConfirmationData? qrConfirmation = message.qrConfirmation;
+          if (qrConfirmation == null) {
+            return message;
+          }
+          final bool isCompleted =
+              _consumedQrTokens.contains(qrConfirmation.qrToken) ||
+              completedQrTokens.contains(qrConfirmation.qrToken) ||
+              completedTransactionIds.contains(qrConfirmation.transactionId);
+          if (!isCompleted) {
+            return message;
+          }
+          return message.copyWith(
+            qrConfirmation: null,
+            completedQrConfirmation:
+                message.completedQrConfirmation ?? qrConfirmation,
+            text: '',
+          );
+        })
+        .where(
+          (_TimelineMessage message) =>
+              message.qrConfirmation != null ||
+              message.completedQrConfirmation != null ||
+              message.inquiryProduct != null ||
+              message.acceptedOfferProduct != null ||
+              message.rejectedOfferProduct != null ||
+              message.text.trim().isNotEmpty,
+        )
+        .toList(growable: false);
   }
 
   _TimelineMessage? _currentInquiryFromTimeline(List<_TimelineMessage> timeline) {
@@ -1098,12 +1320,16 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
           final List<_TimelineMessage> timeline = _buildTimeline(conversationId);
           final _TimelineMessage? currentInquiry =
               _currentInquiryFromTimeline(timeline);
+          final bool hasPendingResolvedInquiry =
+              (_resolvedInquiry?.status ?? '').toLowerCase() == 'pending';
           final InquiryProductData? fallbackInquiryProduct =
               currentInquiry == null &&
-                  (_resolvedInquiry != null ||
+                  (hasPendingResolvedInquiry ||
                       (_hasSentInitialInquiry &&
                           widget.effectiveInquiryProducts.isNotEmpty))
-              ? (_resolvedInquiry?.product ?? widget.effectiveInquiryProducts.first)
+              ? _enrichInquiryProduct(
+                  _resolvedInquiry?.product ?? widget.effectiveInquiryProducts.first,
+                )
               : null;
           final bool fallbackInquiryIsMine =
               _resolvedInquiry?.isMine ?? true;
@@ -1188,6 +1414,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                                       onAccept: () => _acceptResolvedInquiryOffer(
                                         product: fallbackInquiryProduct,
                                         buyerAccountId: fallbackInquiryBuyerAccountId,
+                                        inquiryId: _resolvedInquiry?.inquiryId,
                                       ),
                                       onReject: () => _rejectInquiryOffer(
                                         fallbackInquiryProduct,
@@ -1276,7 +1503,16 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                                       qrConfirmation: message.qrConfirmation!,
                                       isMine: message.isMine,
                                       onTap: () =>
-                                          _showQrConfirmationDialog(message.qrConfirmation!),
+                                          _showQrConfirmationDialog(
+                                            message.qrConfirmation!,
+                                            isMine: message.isMine,
+                                          ),
+                                    )
+                                  else if (message.completedQrConfirmation != null)
+                                    _TransactionCompletedEmbed(
+                                      product:
+                                          message.completedQrConfirmation!.product,
+                                      isMine: message.isMine,
                                     )
                                   else
                                     Container(
@@ -1381,6 +1617,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                           onAccept: () => _acceptResolvedInquiryOffer(
                             product: fallbackInquiryProduct,
                             buyerAccountId: fallbackInquiryBuyerAccountId,
+                            inquiryId: _resolvedInquiry?.inquiryId,
                           ),
                           onReject: () => _rejectInquiryOffer(
                             fallbackInquiryProduct,
@@ -1445,6 +1682,10 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
 
   String _serializeQrConfirmationStartedMessage(QrConfirmationData qrConfirmation) {
     return '$_qrConfirmationStartedMessagePrefix${jsonEncode(qrConfirmation.toJson())}';
+  }
+
+  String _serializeTransactionCompletedMessage(QrConfirmationData qrConfirmation) {
+    return '$_transactionCompletedMessagePrefix${jsonEncode(qrConfirmation.toJson())}';
   }
 
   static InquiryProductData? _parseInquiryMessage(String messageText) {
@@ -1582,9 +1823,11 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
       }
       final int? buyerAccountId = _extractInquiryBuyerAccountId(decoded);
       return _ResolvedInquiryPreview(
+        inquiryId: (decoded['inquiry_id'] as num?)?.toInt() ?? 0,
         product: product,
         buyerAccountId: buyerAccountId,
         isMine: buyerAccountId != null && buyerAccountId == ApiAuthSession.accountId,
+        status: (decoded['status'] ?? 'pending').toString().trim().toLowerCase(),
       );
     }
 
@@ -1602,11 +1845,34 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   }
 
   int? _extractInquiryBuyerAccountId(Map<String, dynamic> json) {
-    return (json['buyer_id'] as num?)?.toInt() ??
+    return (json['inquirer_id'] as num?)?.toInt() ??
+        (json['buyer_id'] as num?)?.toInt() ??
         (json['account_id'] as num?)?.toInt() ??
         (json['requester_id'] as num?)?.toInt() ??
         (json['user_id'] as num?)?.toInt() ??
         (json['sender_id'] as num?)?.toInt();
+  }
+
+  InquiryProductData _enrichInquiryProduct(InquiryProductData product) {
+    for (final InquiryProductData candidate in widget.effectiveInquiryProducts) {
+      if (candidate.listingId != product.listingId) {
+        continue;
+      }
+      return InquiryProductData(
+        listingId: product.listingId,
+        name: product.name.trim().isNotEmpty && product.name != 'Listing'
+            ? product.name
+            : candidate.name,
+        price: product.price.trim().isNotEmpty ? product.price : candidate.price,
+        location: product.location.trim().isNotEmpty
+            ? product.location
+            : candidate.location,
+        imageUrl: product.imageUrl.trim().isNotEmpty
+            ? product.imageUrl
+            : candidate.imageUrl,
+      );
+    }
+    return product;
   }
 
   InquiryProductData? _inquiryProductFromObject(Map<String, dynamic> json) {
@@ -1649,6 +1915,8 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     final String imageUrl =
         normalizeApiAssetUrl(
           (productJson['image_url'] ??
+                  productJson['primary_media_url'] ??
+                  productJson['file_url'] ??
                   productJson['thumbnail_url'] ??
                   productJson['photo_url'] ??
                   '')
@@ -1672,24 +1940,87 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   }) async {
     final int transactionId = await _createTransactionForInquiry(
       product: product,
-      buyerAccountId: buyerAccountId,
-      sellerAccountId: sellerAccountId,
-    );
-    final String qrToken = _generateQrToken();
-    final DateTime expiresAt = DateTime.now().add(const Duration(minutes: 15));
-    final int transactionQrId = await _createTransactionQr(
+        buyerAccountId: buyerAccountId,
+        sellerAccountId: sellerAccountId,
+      );
+    return _generateTransactionQr(
       transactionId: transactionId,
-      sellerAccountId: sellerAccountId,
-      qrToken: qrToken,
-      expiresAt: expiresAt,
-    );
-    return QrConfirmationData(
-      transactionId: transactionId,
-      transactionQrId: transactionQrId,
-      qrToken: qrToken,
-      expiresAt: expiresAt,
       product: product,
+      accountId: sellerAccountId,
     );
+  }
+
+  int? _resolveInquiryIdForProduct(InquiryProductData? product) {
+    if (product == null) {
+      return null;
+    }
+    final _ResolvedInquiryPreview? resolvedInquiry = _resolvedInquiry;
+    if (resolvedInquiry == null) {
+      return null;
+    }
+    if (resolvedInquiry.product.listingId != product.listingId) {
+      return null;
+    }
+    return resolvedInquiry.inquiryId > 0 ? resolvedInquiry.inquiryId : null;
+  }
+
+  Future<void> _acceptListingInquiry({
+    required int listingId,
+    required int inquiryId,
+    required int accountId,
+  }) async {
+    final http.Response response = await http
+        .post(
+          ApiRoutes.acceptListingInquiry(listingId, inquiryId),
+          headers: <String, String>{
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            ...ApiAuthSession.authHeaders(),
+          },
+          body: jsonEncode(<String, dynamic>{'account_id': accountId}),
+        )
+        .timeout(kApiRequestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(_extractErrorMessage(response));
+    }
+  }
+
+  static QrConfirmationData? _parseTransactionCompletedMessage(String messageText) {
+    final String trimmed = messageText.trim();
+    if (!trimmed.startsWith(_transactionCompletedMessagePrefix)) {
+      return null;
+    }
+    final String rawJson = trimmed.substring(
+      _transactionCompletedMessagePrefix.length,
+    );
+    try {
+      final dynamic decoded = jsonDecode(rawJson);
+      if (decoded is Map<String, dynamic>) {
+        return QrConfirmationData.fromJson(decoded);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _rejectListingInquiry({
+    required int listingId,
+    required int inquiryId,
+    required int accountId,
+  }) async {
+    final http.Response response = await http
+        .post(
+          ApiRoutes.rejectListingInquiry(listingId, inquiryId),
+          headers: <String, String>{
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            ...ApiAuthSession.authHeaders(),
+          },
+          body: jsonEncode(<String, dynamic>{'account_id': accountId}),
+        )
+        .timeout(kApiRequestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(_extractErrorMessage(response));
+    }
   }
 
   Future<int> _createTransactionForInquiry({
@@ -1703,45 +2034,54 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
       'seller_id': sellerAccountId,
       'quantity': 1,
       'agreed_price': _parsePriceValue(product.price),
-      'transaction_status': 'qr_confirmation_pending',
+      'transaction_status': 'pending',
     };
-    final http.Response response = await http
-        .post(
-          ApiRoutes.transactions(),
-          headers: <String, String>{
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            ...ApiAuthSession.authHeaders(),
-          },
-          body: jsonEncode(payload),
-        )
-        .timeout(kApiRequestTimeout);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException(_extractErrorMessage(response));
+
+    final List<Uri> candidateUris = <Uri>[
+      ApiRoutes.transactions(),
+      ApiRoutes.transactionsNoSlash(),
+    ];
+
+    HttpException? lastError;
+    for (final Uri uri in candidateUris) {
+      final http.Response response = await http
+          .post(
+            uri,
+            headers: <String, String>{
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(kApiRequestTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return _parseCreatedItemId(
+          response.body,
+          const <String>['transaction_id', 'id'],
+          fallbackError: 'Transaction response was invalid.',
+        );
+      }
+      lastError = HttpException(_extractErrorMessage(response));
+      if (response.statusCode != 404) {
+        throw lastError;
+      }
     }
-    return _parseCreatedItemId(
-      response.body,
-      const <String>['transaction_id', 'id'],
-      fallbackError: 'Transaction response was invalid.',
-    );
+    throw lastError ?? const HttpException('Transaction request failed.');
   }
 
-  Future<int> _createTransactionQr({
+  Future<QrConfirmationData> _generateTransactionQr({
     required int transactionId,
-    required int sellerAccountId,
-    required String qrToken,
-    required DateTime expiresAt,
+    required InquiryProductData product,
+    required int accountId,
   }) async {
     final Map<String, dynamic> payload = <String, dynamic>{
       'transaction_id': transactionId,
-      'qr_token': qrToken,
-      'expires_at': expiresAt.toUtc().toIso8601String(),
-      'is_used': false,
-      'generated_by': sellerAccountId,
+      'account_id': accountId,
     };
     final http.Response response = await http
         .post(
-          ApiRoutes.transactionQr(),
+          ApiRoutes.transactionQrGenerate(),
           headers: <String, String>{
             'Accept': 'application/json',
             'Content-Type': 'application/json',
@@ -1753,11 +2093,46 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw HttpException(_extractErrorMessage(response));
     }
-    return _parseCreatedItemId(
-      response.body,
-      const <String>['transaction_qr_id', 'id'],
-      fallbackError: 'Transaction QR response was invalid.',
+    final dynamic decoded = jsonDecode(response.body);
+    return _parseGeneratedQrConfirmation(
+      decoded,
+      transactionId: transactionId,
+      product: product,
     );
+  }
+
+  QrConfirmationData _parseGeneratedQrConfirmation(
+    dynamic decoded, {
+    required int transactionId,
+    required InquiryProductData product,
+  }) {
+    if (decoded is Map<String, dynamic>) {
+      final int? transactionQrId = _findIntDeep(
+        decoded,
+        const <String>['transaction_qr_id', 'id'],
+      );
+      final String? qrToken = _findStringDeep(
+        decoded,
+        const <String>['qr_token', 'token'],
+      );
+      final DateTime? expiresAt = _findDateTimeDeep(
+        decoded,
+        const <String>['expires_at'],
+      );
+      if (transactionQrId != null &&
+          transactionQrId > 0 &&
+          qrToken != null &&
+          qrToken.isNotEmpty) {
+        return QrConfirmationData(
+          transactionId: transactionId,
+          transactionQrId: transactionQrId,
+          qrToken: qrToken,
+          expiresAt: expiresAt,
+          product: product,
+        );
+      }
+    }
+    throw const FormatException('Transaction QR response was invalid.');
   }
 
   int _parseCreatedItemId(
@@ -1777,13 +2152,80 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     throw FormatException(fallbackError);
   }
 
-  String _generateQrToken() {
-    final Random random = Random.secure();
-    const String alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    return List<String>.generate(
-      24,
-      (_) => alphabet[random.nextInt(alphabet.length)],
-    ).join();
+  int? _findIntDeep(dynamic decoded, List<String> keys) {
+    if (decoded is Map<String, dynamic>) {
+      for (final String key in keys) {
+        final int? value = (decoded[key] as num?)?.toInt();
+        if (value != null && value > 0) {
+          return value;
+        }
+      }
+      for (final dynamic value in decoded.values) {
+        final int? nested = _findIntDeep(value, keys);
+        if (nested != null && nested > 0) {
+          return nested;
+        }
+      }
+    } else if (decoded is List) {
+      for (final dynamic value in decoded) {
+        final int? nested = _findIntDeep(value, keys);
+        if (nested != null && nested > 0) {
+          return nested;
+        }
+      }
+    }
+    return null;
+  }
+
+  String? _findStringDeep(dynamic decoded, List<String> keys) {
+    if (decoded is Map<String, dynamic>) {
+      for (final String key in keys) {
+        final String value = (decoded[key] ?? '').toString().trim();
+        if (value.isNotEmpty) {
+          return value;
+        }
+      }
+      for (final dynamic value in decoded.values) {
+        final String? nested = _findStringDeep(value, keys);
+        if (nested != null && nested.isNotEmpty) {
+          return nested;
+        }
+      }
+    } else if (decoded is List) {
+      for (final dynamic value in decoded) {
+        final String? nested = _findStringDeep(value, keys);
+        if (nested != null && nested.isNotEmpty) {
+          return nested;
+        }
+      }
+    }
+    return null;
+  }
+
+  DateTime? _findDateTimeDeep(dynamic decoded, List<String> keys) {
+    if (decoded is Map<String, dynamic>) {
+      for (final String key in keys) {
+        final DateTime? value =
+            DateTime.tryParse((decoded[key] ?? '').toString())?.toLocal();
+        if (value != null) {
+          return value;
+        }
+      }
+      for (final dynamic value in decoded.values) {
+        final DateTime? nested = _findDateTimeDeep(value, keys);
+        if (nested != null) {
+          return nested;
+        }
+      }
+    } else if (decoded is List) {
+      for (final dynamic value in decoded) {
+        final DateTime? nested = _findDateTimeDeep(value, keys);
+        if (nested != null) {
+          return nested;
+        }
+      }
+    }
+    return null;
   }
 
   double _parsePriceValue(String rawPrice) {
@@ -1791,35 +2233,117 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     return double.tryParse(normalized) ?? 0;
   }
 
-  void _showQrConfirmationDialog(QrConfirmationData qrConfirmation) {
+  void _showQrConfirmationDialog(
+    QrConfirmationData qrConfirmation, {
+    required bool isMine,
+  }) {
+    _hasHandledScan = false;
     showDialog<void>(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('QR confirmation started'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(qrConfirmation.product.name),
-              const SizedBox(height: 8),
-              Text(
-                'Token: ${qrConfirmation.qrToken}',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontFamily: 'monospace',
-                      fontWeight: FontWeight.w700,
+        return Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isMine ? 'QR confirmation started' : 'Scan seller QR',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 16),
+                  if (isMine)
+                    Center(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: QrImageView(
+                          data: qrConfirmation.qrToken,
+                          version: QrVersions.auto,
+                          size: 180,
+                          backgroundColor: Colors.white,
+                          eyeStyle: const QrEyeStyle(
+                            eyeShape: QrEyeShape.square,
+                            color: Colors.black,
+                          ),
+                          dataModuleStyle: const QrDataModuleStyle(
+                            dataModuleShape: QrDataModuleShape.square,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      width: 240,
+                      height: 240,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: MobileScanner(
+                          controller: _qrScannerController,
+                          onDetect: (BarcodeCapture capture) {
+                            if (_hasHandledScan || capture.barcodes.isEmpty) {
+                              return;
+                            }
+                            final String rawValue =
+                                capture.barcodes.first.rawValue?.trim() ?? '';
+                            if (rawValue.isEmpty) {
+                              return;
+                            }
+                            _hasHandledScan = true;
+                            unawaited(
+                              _confirmScannedQr(
+                                scannedToken: rawValue,
+                                expectedQr: qrConfirmation,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
                     ),
+                  const SizedBox(height: 12),
+                  Text(qrConfirmation.product.name),
+                  const SizedBox(height: 8),
+                  Text(
+                    isMine
+                        ? 'Token: ${qrConfirmation.qrToken}'
+                        : 'Scan the seller QR to confirm this transaction.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontFamily: isMine ? 'monospace' : null,
+                          fontWeight: isMine ? FontWeight.w700 : FontWeight.w400,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    qrConfirmation.expiresAt == null
+                        ? 'Does not expire automatically'
+                        : 'Expires ${_formatQrExpiry(qrConfirmation.expiresAt!)}',
+                  ),
+                  if (!isMine && _isConfirmingQr) ...[
+                    const SizedBox(height: 12),
+                    const LinearProgressIndicator(),
+                  ],
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        _hasHandledScan = false;
+                        Navigator.of(context).pop();
+                      },
+                      child: const Text('Close'),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              Text('Expires ${_formatQrExpiry(qrConfirmation.expiresAt)}'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
             ),
-          ],
+          ),
         );
       },
     );
@@ -1831,6 +2355,99 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     final String minute = local.minute.toString().padLeft(2, '0');
     final String period = local.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $period';
+  }
+
+  Future<void> _confirmScannedQr({
+    required String scannedToken,
+    required QrConfirmationData expectedQr,
+  }) async {
+    if (_isConfirmingQr) {
+      return;
+    }
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null || accountId <= 0) {
+      _hasHandledScan = false;
+      return;
+    }
+
+    setState(() {
+      _isConfirmingQr = true;
+    });
+
+    try {
+      final http.Response response = await http
+          .post(
+            ApiRoutes.transactionQrConfirm(),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+            body: jsonEncode(<String, dynamic>{
+              'qr_token': scannedToken,
+              'account_id': accountId,
+            }),
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractErrorMessage(response));
+      }
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _consumedQrTokens.add(expectedQr.qrToken);
+      });
+      final int? conversationId = _activeConversationId;
+      if (conversationId != null) {
+        await _realtime.sendMessage(
+          conversationId: conversationId,
+          messageText: _serializeTransactionCompletedMessage(expectedQr),
+        );
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            scannedToken == expectedQr.qrToken
+                ? 'QR confirmed successfully.'
+                : 'QR confirmed.',
+          ),
+        ),
+      );
+    } on TimeoutException {
+      _hasHandledScan = false;
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('QR confirmation timed out.')),
+      );
+    } on SocketException {
+      _hasHandledScan = false;
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not connect to confirm the QR.')),
+      );
+    } on HttpException catch (error) {
+      _hasHandledScan = false;
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isConfirmingQr = false;
+        });
+      }
+    }
   }
 }
 
@@ -1951,14 +2568,18 @@ class InquiryProductData {
 
 class _ResolvedInquiryPreview {
   const _ResolvedInquiryPreview({
+    required this.inquiryId,
     required this.product,
     required this.buyerAccountId,
     required this.isMine,
+    required this.status,
   });
 
+  final int inquiryId;
   final InquiryProductData product;
   final int? buyerAccountId;
   final bool isMine;
+  final String status;
 }
 
 class QrConfirmationData {
@@ -1973,7 +2594,7 @@ class QrConfirmationData {
   final int transactionId;
   final int transactionQrId;
   final String qrToken;
-  final DateTime expiresAt;
+  final DateTime? expiresAt;
   final InquiryProductData product;
 
   Map<String, dynamic> toJson() {
@@ -1981,7 +2602,7 @@ class QrConfirmationData {
       'transaction_id': transactionId,
       'transaction_qr_id': transactionQrId,
       'qr_token': qrToken,
-      'expires_at': expiresAt.toUtc().toIso8601String(),
+      'expires_at': expiresAt?.toUtc().toIso8601String(),
       'product': product.toJson(),
     };
   }
@@ -1993,8 +2614,7 @@ class QrConfirmationData {
       transactionQrId: (json['transaction_qr_id'] as num?)?.toInt() ?? 0,
       qrToken: (json['qr_token'] ?? '').toString(),
       expiresAt:
-          DateTime.tryParse((json['expires_at'] ?? '').toString())?.toLocal() ??
-              DateTime.now(),
+          DateTime.tryParse((json['expires_at'] ?? '').toString())?.toLocal(),
       product: productJson is Map<String, dynamic>
           ? InquiryProductData.fromJson(productJson)
           : const InquiryProductData(
@@ -2265,6 +2885,27 @@ class _QrConfirmationStartedEmbed extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final Widget qrPreview = Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: QrImageView(
+        data: qrConfirmation.qrToken,
+        version: QrVersions.auto,
+        size: 148,
+        backgroundColor: Colors.white,
+        eyeStyle: const QrEyeStyle(
+          eyeShape: QrEyeShape.square,
+          color: Colors.black,
+        ),
+        dataModuleStyle: const QrDataModuleStyle(
+          dataModuleShape: QrDataModuleShape.square,
+          color: Colors.black,
+        ),
+      ),
+    );
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -2318,9 +2959,15 @@ class _QrConfirmationStartedEmbed extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                 ),
+                if (isMine) ...[
+                  const SizedBox(height: 12),
+                  Center(child: qrPreview),
+                ],
                 const SizedBox(height: 8),
                 Text(
-                  'Tap to view confirmation details',
+                  isMine
+                      ? 'Show this QR to the buyer or tap to enlarge'
+                      : 'Tap to scan the seller QR',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
@@ -2328,6 +2975,54 @@ class _QrConfirmationStartedEmbed extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TransactionCompletedEmbed extends StatelessWidget {
+  const _TransactionCompletedEmbed({
+    required this.product,
+    required this.isMine,
+  });
+
+  final InquiryProductData product;
+  final bool isMine;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 280),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isMine
+              ? colorScheme.primaryContainer
+              : colorScheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.task_alt,
+              color: colorScheme.primary,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Transaction completed for ${product.name}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2436,6 +3131,7 @@ class _ApiMessage {
     required this.messageId,
     required this.conversationId,
     required this.senderId,
+    required this.senderUsername,
     required this.messageText,
     required this.sentAt,
     required this.sourceOrder,
@@ -2444,6 +3140,7 @@ class _ApiMessage {
   final int messageId;
   final int conversationId;
   final int? senderId;
+  final String? senderUsername;
   final String messageText;
   final DateTime sentAt;
   final int sourceOrder;
@@ -2456,6 +3153,7 @@ class _ApiMessage {
       messageId: (json['message_id'] as num?)?.toInt() ?? 0,
       conversationId: (json['conversation_id'] as num?)?.toInt() ?? 0,
       senderId: (json['sender_id'] as num?)?.toInt(),
+      senderUsername: (json['sender_username'] ?? '').toString().trim(),
       messageText: (json['message_text'] ?? '').toString(),
       sentAt: parsedSentAt,
       sourceOrder: sourceOrder,
@@ -2471,6 +3169,7 @@ class _TimelineMessage {
     required this.acceptedOfferProduct,
     required this.rejectedOfferProduct,
     required this.qrConfirmation,
+    required this.completedQrConfirmation,
     required this.isMine,
     required this.isRealtime,
     required this.senderName,
@@ -2485,12 +3184,39 @@ class _TimelineMessage {
   final InquiryProductData? acceptedOfferProduct;
   final InquiryProductData? rejectedOfferProduct;
   final QrConfirmationData? qrConfirmation;
+  final QrConfirmationData? completedQrConfirmation;
   final bool isMine;
   final bool isRealtime;
   final String senderName;
   final int? senderAccountId;
   final DateTime sentAt;
   final int sortOrder;
+
+  _TimelineMessage copyWith({
+    String? text,
+    InquiryProductData? inquiryProduct,
+    InquiryProductData? acceptedOfferProduct,
+    InquiryProductData? rejectedOfferProduct,
+    QrConfirmationData? qrConfirmation,
+    QrConfirmationData? completedQrConfirmation,
+  }) {
+    return _TimelineMessage(
+      messageId: messageId,
+      text: text ?? this.text,
+      inquiryProduct: inquiryProduct ?? this.inquiryProduct,
+      acceptedOfferProduct: acceptedOfferProduct ?? this.acceptedOfferProduct,
+      rejectedOfferProduct: rejectedOfferProduct ?? this.rejectedOfferProduct,
+      qrConfirmation: qrConfirmation,
+      completedQrConfirmation:
+          completedQrConfirmation ?? this.completedQrConfirmation,
+      isMine: isMine,
+      isRealtime: isRealtime,
+      senderName: senderName,
+      senderAccountId: senderAccountId,
+      sentAt: sentAt,
+      sortOrder: sortOrder,
+    );
+  }
 
   factory _TimelineMessage.api(
     _ApiMessage message, {
@@ -2508,18 +3234,24 @@ class _TimelineMessage {
         _ChatThreadPageState._parseQrConfirmationStartedMessage(
           message.messageText,
         );
+    final QrConfirmationData? completedQrConfirmation =
+        _ChatThreadPageState._parseTransactionCompletedMessage(
+          message.messageText,
+        );
     return _TimelineMessage(
       messageId: message.messageId,
       text: inquiryProduct == null &&
               acceptedOfferProduct == null &&
               rejectedOfferProduct == null &&
-              qrConfirmation == null
+              qrConfirmation == null &&
+              completedQrConfirmation == null
           ? message.messageText
           : '',
       inquiryProduct: inquiryProduct,
       acceptedOfferProduct: acceptedOfferProduct,
       rejectedOfferProduct: rejectedOfferProduct,
       qrConfirmation: qrConfirmation,
+      completedQrConfirmation: completedQrConfirmation,
       isMine: isMine,
       isRealtime: false,
       senderName: isMine ? 'You' : otherParticipantName,
@@ -2540,18 +3272,24 @@ class _TimelineMessage {
         _ChatThreadPageState._parseQrConfirmationStartedMessage(
           message.messageText,
         );
+    final QrConfirmationData? completedQrConfirmation =
+        _ChatThreadPageState._parseTransactionCompletedMessage(
+          message.messageText,
+        );
     return _TimelineMessage(
       messageId: message.messageId,
       text: inquiryProduct == null &&
               acceptedOfferProduct == null &&
               rejectedOfferProduct == null &&
-              qrConfirmation == null
+              qrConfirmation == null &&
+              completedQrConfirmation == null
           ? message.messageText
           : '',
       inquiryProduct: inquiryProduct,
       acceptedOfferProduct: acceptedOfferProduct,
       rejectedOfferProduct: rejectedOfferProduct,
       qrConfirmation: qrConfirmation,
+      completedQrConfirmation: completedQrConfirmation,
       isMine: message.isMine,
       isRealtime: true,
       senderName: message.senderUsername,

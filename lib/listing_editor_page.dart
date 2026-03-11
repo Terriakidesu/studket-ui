@@ -131,9 +131,9 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
               description: _descriptionController.text,
               listingType:
                   _isLookingForMode ? 'looking_for' : _selectedListingType,
-              price: _isLookingForMode ? null : amount,
-              budgetMin: _isLookingForMode ? budgetMin : null,
-              budgetMax: _isLookingForMode ? budgetMax : null,
+              price: _isLookingForMode ? budgetMin : amount,
+              budgetMin: null,
+              budgetMax: null,
               condition: _isLookingForMode ? null : _selectedCondition,
               tags: _selectedTags.toList(growable: false),
               status: widget.initialListing?.status ?? 'available',
@@ -143,9 +143,9 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
               description: _descriptionController.text,
               listingType:
                   _isLookingForMode ? 'looking_for' : _selectedListingType,
-              price: _isLookingForMode ? null : amount,
-              budgetMin: _isLookingForMode ? budgetMin : null,
-              budgetMax: _isLookingForMode ? budgetMax : null,
+              price: _isLookingForMode ? budgetMin : amount,
+              budgetMin: null,
+              budgetMax: null,
               condition: _isLookingForMode ? null : _selectedCondition,
               tags: _selectedTags.toList(growable: false),
             );

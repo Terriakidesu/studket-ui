@@ -4,6 +4,8 @@ class FeedListing {
   const FeedListing({
     required this.id,
     required this.ownerId,
+    required this.shareToken,
+    required this.shareUrl,
     required this.title,
     required this.description,
     required this.imageUrls,
@@ -21,6 +23,8 @@ class FeedListing {
 
   final int id;
   final int? ownerId;
+  final String? shareToken;
+  final String? shareUrl;
   final String title;
   final String description;
   final List<String> imageUrls;
@@ -36,14 +40,19 @@ class FeedListing {
   final bool sellerIsTrusted;
 
   factory FeedListing.fromJson(Map<String, dynamic> json) {
+    final List<String> imageUrls = _extractImageUrls(json);
     return FeedListing(
       id: (json['listing_id'] as num?)?.toInt() ?? 0,
       ownerId: (json['owner_id'] as num?)?.toInt() ??
           (json['seller_id'] as num?)?.toInt() ??
           (json['account_id'] as num?)?.toInt(),
+      shareToken: (json['share_token'] ?? '').toString().trim().isEmpty
+          ? null
+          : (json['share_token'] ?? '').toString().trim(),
+      shareUrl: _normalizeShareUrl(json['share_url']?.toString()),
       title: (json['title'] ?? 'Untitled Listing').toString(),
       description: (json['description'] ?? '').toString(),
-      imageUrls: _extractImageUrls(json),
+      imageUrls: imageUrls,
       price: json['price'] as num?,
       campus: (json['seller_campus'] ?? 'Campus not provided').toString(),
       tags: (json['tags'] is List)
@@ -63,6 +72,9 @@ class FeedListing {
   }
 
   static List<String> _extractImageUrls(Map<String, dynamic> json) {
+    final String? primaryMediaUrl = _normalizeImageUrl(
+      json['primary_media_url']?.toString(),
+    );
     final List<dynamic> rawCollections = <dynamic>[
       json['image_urls'],
       json['images'],
@@ -73,6 +85,9 @@ class FeedListing {
     ];
 
     final List<String> urls = <String>[];
+    if (primaryMediaUrl != null) {
+      urls.add(primaryMediaUrl);
+    }
     for (final dynamic collection in rawCollections) {
       if (collection is! List) {
         continue;
@@ -137,5 +152,23 @@ class FeedListing {
 
   static String? _normalizeImageUrl(String? raw) {
     return normalizeApiAssetUrl(raw);
+  }
+
+  static String? _normalizeShareUrl(String? raw) {
+    final String trimmed = (raw ?? '').trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    final Uri? parsed = Uri.tryParse(trimmed);
+    if (parsed != null && parsed.hasScheme) {
+      return parsed.toString();
+    }
+    final Uri apiUri = Uri.parse(resolveApiBaseUrl());
+    final Uri originUri = apiUri.replace(
+      path: '/',
+      query: null,
+      fragment: null,
+    );
+    return originUri.resolve(trimmed).toString();
   }
 }

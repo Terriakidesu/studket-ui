@@ -1,9 +1,16 @@
-import 'package:flutter/material.dart';
+import 'dart:convert';
 
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
+import 'api/api_routes.dart';
 import 'api/user_realtime_service.dart';
 import 'chats_page.dart';
+import 'product_details_page.dart';
 import 'components/studket_app_bar.dart';
+import 'user_profile_page.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -122,7 +129,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     if (!context.mounted) {
                       return;
                     }
-                    _openMessageGroup(context, latest);
+                    await _openNotificationTarget(context, latest);
                   },
                   title: Row(
                     children: [
@@ -250,6 +257,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
                           item.notificationId,
                         );
                       }
+                      if (!context.mounted) {
+                        return;
+                      }
+                      await _openNotificationTarget(context, item);
                     },
                     title: Text(
                       item.title,
@@ -355,6 +366,147 @@ class _NotificationsPageState extends State<NotificationsPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _openNotificationTarget(
+    BuildContext context,
+    UserRealtimeNotification notification,
+  ) async {
+    if (_isMessageNotification(notification)) {
+      _openMessageGroup(context, notification);
+      return;
+    }
+
+    final String type = notification.notificationType.trim().toLowerCase();
+    final String entity = (notification.relatedEntityType ?? '')
+        .trim()
+        .toLowerCase();
+
+    if (entity == 'conversation' || entity == 'message' || entity == 'chat') {
+      _openMessageGroup(context, notification);
+      return;
+    }
+
+    if (entity == 'listing' ||
+        type.contains('listing') ||
+        type.contains('inquiry') ||
+        type.contains('transaction')) {
+      final bool opened = await _openListingNotification(context, notification);
+      if (opened || !context.mounted) {
+        return;
+      }
+    }
+
+    if (type.contains('seller') ||
+        type.contains('account') ||
+        type.contains('warning') ||
+        type.contains('verification') ||
+        type.contains('welcome')) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const UserProfilePage()),
+      );
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ChatsPage()),
+    );
+  }
+
+  Future<bool> _openListingNotification(
+    BuildContext context,
+    UserRealtimeNotification notification,
+  ) async {
+    final int? listingId = notification.relatedEntityId;
+    if (listingId == null || listingId <= 0) {
+      return false;
+    }
+
+    try {
+      final http.Response response = await http
+          .get(
+            ApiRoutes.listingById(listingId),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+          )
+          .timeout(kApiRequestTimeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return false;
+      }
+
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        return false;
+      }
+
+      final int resolvedListingId =
+          (decoded['listing_id'] as num?)?.toInt() ??
+          (decoded['id'] as num?)?.toInt() ??
+          listingId;
+      final int? ownerId =
+          (decoded['owner_id'] as num?)?.toInt() ??
+          (decoded['seller_id'] as num?)?.toInt();
+      final String sellerName =
+          (decoded['seller_username'] ?? decoded['owner_username'] ?? 'Seller')
+              .toString();
+      final String imageUrl = normalizeApiAssetUrl(
+            (decoded['primary_media_url'] ?? '').toString(),
+          ) ??
+          '';
+      final String campus =
+          (decoded['seller_campus'] ?? decoded['campus'] ?? '').toString();
+      final String productTitle =
+          (decoded['title'] ?? decoded['listing_title'] ?? 'Listing').toString();
+      final String priceValue = (decoded['price'] ?? '').toString().trim();
+      final String description =
+          (decoded['description'] ?? '').toString().trim();
+
+      if (!context.mounted) {
+        return true;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ProductDetailsPage(
+            listingId: resolvedListingId,
+            listingType: (decoded['listing_type'] ?? '').toString(),
+            shareToken: (decoded['share_token'] ?? '').toString().trim().isEmpty
+                ? null
+                : (decoded['share_token'] ?? '').toString().trim(),
+            shareUrl: normalizeApiAssetUrl((decoded['share_url'] ?? '').toString()) ??
+                (() {
+                  final String raw = (decoded['share_url'] ?? '').toString().trim();
+                  if (raw.isEmpty) {
+                    return null;
+                  }
+                  final Uri apiUri = Uri.parse(resolveApiBaseUrl());
+                  final Uri originUri = apiUri.replace(
+                    path: '/',
+                    query: null,
+                    fragment: null,
+                  );
+                  return originUri.resolve(raw).toString();
+                })(),
+            productName: productTitle,
+            productPrice: priceValue.isEmpty ? 'Price unavailable' : 'PHP $priceValue',
+            productLocation: campus,
+            productDescription: description,
+            imageUrls: imageUrl.isEmpty ? const <String>[] : <String>[imageUrl],
+            sellerName: sellerName,
+            sellerAccountId: ownerId,
+            sellerAvatarUrl:
+                ownerId == null
+                    ? ''
+                    : '${resolveApiBaseUrl(apiPath: 'api/v1')}/profile-pictures/$ownerId',
+            sellerRating: 4.5,
+          ),
+        ),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _markNotificationsRead(
