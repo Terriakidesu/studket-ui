@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../app_notifications.dart';
 import 'api_auth_session.dart';
 import 'api_base_url.dart';
 
@@ -163,6 +164,34 @@ class UserRealtimeMessage {
   }
 }
 
+class UserRealtimeTypingState {
+  const UserRealtimeTypingState({
+    required this.conversationId,
+    required this.accountId,
+    required this.username,
+    required this.accountType,
+    required this.isTyping,
+  });
+
+  final int conversationId;
+  final int? accountId;
+  final String username;
+  final String accountType;
+  final bool isTyping;
+
+  bool get isMine => accountId != null && accountId == ApiAuthSession.accountId;
+
+  factory UserRealtimeTypingState.fromJson(Map<String, dynamic> json) {
+    return UserRealtimeTypingState(
+      conversationId: _asInt(json['conversation_id']) ?? 0,
+      accountId: _asInt(json['account_id']),
+      username: _asString(json['username'], 'Someone'),
+      accountType: _asString(json['account_type'], 'user'),
+      isTyping: json['is_typing'] == true,
+    );
+  }
+}
+
 class UserRealtimeService extends ChangeNotifier {
   UserRealtimeService._();
 
@@ -181,6 +210,8 @@ class UserRealtimeService extends ChangeNotifier {
       <UserRealtimeNotification>[];
   final Map<int, List<UserRealtimeMessage>> _messages =
       <int, List<UserRealtimeMessage>>{};
+  final Map<int, UserRealtimeTypingState> _typingStates =
+      <int, UserRealtimeTypingState>{};
   final Set<int> _conversationsWithNewMessages = <int>{};
   int _messageSequence = 0;
   int? _activeConversationId;
@@ -203,6 +234,10 @@ class UserRealtimeService extends ChangeNotifier {
 
   bool hasNewMessage(int conversationId) {
     return _conversationsWithNewMessages.contains(conversationId);
+  }
+
+  UserRealtimeTypingState? typingStateFor(int conversationId) {
+    return _typingStates[conversationId];
   }
 
   void openConversation(int conversationId) {
@@ -278,6 +313,7 @@ class UserRealtimeService extends ChangeNotifier {
       _conversations.clear();
       _notifications.clear();
       _messages.clear();
+      _typingStates.clear();
       _conversationsWithNewMessages.clear();
       _messageSequence = 0;
       _activeConversationId = null;
@@ -303,6 +339,27 @@ class UserRealtimeService extends ChangeNotifier {
     await _send(<String, dynamic>{
       'action': 'mark_notification_read',
       'notification_id': notificationId,
+    });
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    final List<int> unreadIds = _notifications
+        .where((UserRealtimeNotification item) => !item.isRead)
+        .map((UserRealtimeNotification item) => item.notificationId)
+        .toList(growable: false);
+    for (final int notificationId in unreadIds) {
+      await markNotificationRead(notificationId);
+    }
+  }
+
+  Future<void> sendTypingStatus({
+    required int conversationId,
+    required bool isTyping,
+  }) async {
+    await _send(<String, dynamic>{
+      'action': 'typing_status',
+      'conversation_id': conversationId,
+      'is_typing': isTyping,
     });
   }
 
@@ -342,17 +399,29 @@ class UserRealtimeService extends ChangeNotifier {
       case 'chat.message':
         final dynamic messageJson = decoded['message'];
         if (messageJson is Map<String, dynamic>) {
-          _addMessage(
-            UserRealtimeMessage.fromJson(
-              messageJson,
-              receivedSequence: ++_messageSequence,
-            ),
+          final UserRealtimeMessage message = UserRealtimeMessage.fromJson(
+            messageJson,
+            receivedSequence: ++_messageSequence,
           );
+          _addMessage(message);
+          if (!message.isMine && _activeConversationId != message.conversationId) {
+            AppNotifications.instance.showIncomingMessage(
+              messageId: message.messageId,
+              conversationId: message.conversationId,
+              senderName: message.senderUsername,
+              messageText: message.messageText,
+            );
+          }
         }
+        return;
+      case 'chat.typing':
+        _updateTypingState(UserRealtimeTypingState.fromJson(decoded));
         return;
       case 'notification.created':
         final dynamic notificationJson = decoded['notification'];
         if (notificationJson is Map<String, dynamic>) {
+          final UserRealtimeNotification notification =
+              UserRealtimeNotification.fromJson(notificationJson);
           _notifications.removeWhere(
             (UserRealtimeNotification item) =>
                 item.notificationId ==
@@ -360,8 +429,15 @@ class UserRealtimeService extends ChangeNotifier {
           );
           _notifications.insert(
             0,
-            UserRealtimeNotification.fromJson(notificationJson),
+            notification,
           );
+          if (!notification.isRead && !_isMessageNotification(notification)) {
+            AppNotifications.instance.showRealtimeNotification(
+              notificationId: notification.notificationId,
+              title: notification.title,
+              body: notification.body,
+            );
+          }
           notifyListeners();
         }
         return;
@@ -397,6 +473,7 @@ class UserRealtimeService extends ChangeNotifier {
             .whereType<Map<String, dynamic>>()
             .map(UserRealtimeNotification.fromJson),
       );
+    _typingStates.clear();
 
     notifyListeners();
   }
@@ -445,9 +522,34 @@ class UserRealtimeService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _updateTypingState(UserRealtimeTypingState state) {
+    if (state.isMine) {
+      return;
+    }
+    if (!state.isTyping) {
+      if (_typingStates.remove(state.conversationId) != null) {
+        notifyListeners();
+      }
+      return;
+    }
+    _typingStates[state.conversationId] = state;
+    notifyListeners();
+  }
+
   void _setError(String message) {
     _error = message;
     notifyListeners();
+  }
+
+  bool _isMessageNotification(UserRealtimeNotification notification) {
+    final String type = notification.notificationType.trim().toLowerCase();
+    final String? entityType = notification.relatedEntityType
+        ?.trim()
+        .toLowerCase();
+    return type.contains('message') ||
+        type.contains('chat') ||
+        entityType == 'message' ||
+        entityType == 'conversation';
   }
 }
 

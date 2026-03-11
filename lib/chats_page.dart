@@ -125,7 +125,12 @@ class _ChatsPageState extends State<ChatsPage> {
               final bool hasNewMessage = _realtime.hasNewMessage(
                 conversation.conversationId,
               );
-              final String recentMessage = _recentMessagePreview(conversation);
+              final UserRealtimeTypingState? typingState =
+                  _realtime.typingStateFor(conversation.conversationId);
+              final bool isTyping = typingState?.isTyping == true;
+              final String recentMessage = isTyping
+                  ? '${typingState!.username} is typing...'
+                  : _recentMessagePreview(conversation);
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 decoration: BoxDecoration(
@@ -181,8 +186,11 @@ class _ChatsPageState extends State<ChatsPage> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: hasNewMessage ? Colors.black87 : Colors.grey[700],
-                      fontWeight: hasNewMessage
+                      color: isTyping
+                          ? Theme.of(context).colorScheme.primary
+                          : (hasNewMessage ? Colors.black87 : Colors.grey[700]),
+                      fontStyle: isTyping ? FontStyle.italic : FontStyle.normal,
+                      fontWeight: hasNewMessage || isTyping
                           ? FontWeight.w600
                           : FontWeight.w400,
                     ),
@@ -309,6 +317,8 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   final UserRealtimeService _realtime = UserRealtimeService.instance;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  Timer? _typingDebounce;
+  bool _isSendingTyping = false;
 
   bool _isLoadingHistory = false;
   String? _historyError;
@@ -318,6 +328,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   @override
   void initState() {
     super.initState();
+    _messageController.addListener(_handleComposerChanged);
     unawaited(_realtime.ensureConnected());
     if (widget.conversationId != null) {
       _realtime.openConversation(widget.conversationId!);
@@ -328,6 +339,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
 
   @override
   void dispose() {
+    _typingDebounce?.cancel();
+    unawaited(_stopTyping());
+    _messageController.removeListener(_handleComposerChanged);
     if (widget.conversationId != null) {
       _realtime.closeConversation(widget.conversationId!);
     }
@@ -444,12 +458,54 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
       return;
     }
 
+    await _stopTyping();
     await _realtime.sendMessage(
       conversationId: conversationId,
       messageText: text,
     );
     _messageController.clear();
     _scheduleScrollToBottom();
+  }
+
+  void _handleComposerChanged() {
+    final int? conversationId = widget.conversationId;
+    if (conversationId == null) {
+      return;
+    }
+
+    final String text = _messageController.text.trim();
+    if (text.isEmpty) {
+      _typingDebounce?.cancel();
+      unawaited(_stopTyping());
+      return;
+    }
+
+    if (!_isSendingTyping) {
+      _isSendingTyping = true;
+      unawaited(
+        _realtime.sendTypingStatus(
+          conversationId: conversationId,
+          isTyping: true,
+        ),
+      );
+    }
+
+    _typingDebounce?.cancel();
+    _typingDebounce = Timer(const Duration(milliseconds: 1200), () {
+      unawaited(_stopTyping());
+    });
+  }
+
+  Future<void> _stopTyping() async {
+    final int? conversationId = widget.conversationId;
+    if (!_isSendingTyping || conversationId == null) {
+      return;
+    }
+    _isSendingTyping = false;
+    await _realtime.sendTypingStatus(
+      conversationId: conversationId,
+      isTyping: false,
+    );
   }
 
   List<_TimelineMessage> _buildTimeline(int conversationId) {
@@ -546,6 +602,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
           }
 
           final List<_TimelineMessage> timeline = _buildTimeline(conversationId);
+          final UserRealtimeTypingState? typingState = _realtime.typingStateFor(
+            conversationId,
+          );
           if (timeline.length != _lastRenderedMessageCount) {
             _lastRenderedMessageCount = timeline.length;
             _scheduleScrollToBottom(
@@ -668,29 +727,71 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
               SafeArea(
                 top: false,
                 minimum: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                child: Row(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _sendMessage(),
-                        decoration: InputDecoration(
-                          hintText: 'Type a message',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      child: typingState?.isTyping == true
+                          ? Padding(
+                              key: const ValueKey('typing-indicator'),
+                              padding: const EdgeInsets.only(
+                                left: 4,
+                                right: 4,
+                                bottom: 8,
+                              ),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _TypingDots(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '${typingState!.username} is typing...',
+                                      style: TextStyle(
+                                        color: Colors.grey[700],
+                                        fontSize: 12,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(
+                              key: ValueKey('typing-indicator-empty'),
+                            ),
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _messageController,
+                            textInputAction: TextInputAction.send,
+                            onSubmitted: (_) => _sendMessage(),
+                            decoration: InputDecoration(
+                              hintText: 'Type a message',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 12,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton.filled(
-                      onPressed: _sendMessage,
-                      icon: const Icon(Icons.send),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          onPressed: _sendMessage,
+                          icon: const Icon(Icons.send),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -708,6 +809,60 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     final String minute = local.minute.toString().padLeft(2, '0');
     final String period = local.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $period';
+  }
+}
+
+class _TypingDots extends StatefulWidget {
+  const _TypingDots({required this.color});
+
+  final Color color;
+
+  @override
+  State<_TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (BuildContext context, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List<Widget>.generate(3, (int index) {
+            final double phase = (_controller.value - (index * 0.18)) % 1;
+            final double opacity = 0.35 + ((1 - phase).clamp(0.0, 1.0) * 0.65);
+            final double scale = 0.7 + ((1 - phase).clamp(0.0, 1.0) * 0.3);
+            return Padding(
+              padding: EdgeInsets.only(right: index == 2 ? 0 : 4),
+              child: Transform.scale(
+                scale: scale,
+                child: Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: widget.color.withValues(alpha: opacity),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
   }
 }
 

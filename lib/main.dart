@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'app_notifications.dart';
 import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
 import 'api/api_routes.dart';
@@ -13,9 +14,12 @@ import 'api/user_realtime_service.dart';
 import 'authentication_page.dart';
 import 'chats_page.dart';
 import 'components/studket_app_bar.dart';
+import 'notifications_page.dart';
 import 'user_profile_page.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppNotifications.instance.initialize();
   runApp(const MyApp());
 }
 
@@ -312,66 +316,7 @@ class _MyHomePageState extends State<MyHomePage> {
       .where((UserRealtimeNotification item) => !item.isRead)
       .length;
 
-  int get _chatBadgeCount => _realtime.conversations.length;
-
-  Future<void> _showNotificationsSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (BuildContext context) {
-        return AnimatedBuilder(
-          animation: _realtime,
-          builder: (BuildContext context, _) {
-            final List<UserRealtimeNotification> notifications =
-                _realtime.notifications;
-
-            if (notifications.isEmpty) {
-              return const SafeArea(
-                child: SizedBox(
-                  height: 220,
-                  child: Center(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 24),
-                      child: Text(
-                        'No notifications yet. New realtime notifications will appear here.',
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }
-
-            return SafeArea(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: notifications.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (BuildContext context, int index) {
-                  final UserRealtimeNotification notification =
-                      notifications[index];
-                  return ListTile(
-                    title: Text(notification.title),
-                    subtitle: Text(notification.body),
-                    trailing: notification.isRead
-                        ? const Icon(Icons.done_all, size: 18)
-                        : TextButton(
-                            onPressed: () {
-                              _realtime.markNotificationRead(
-                                notification.notificationId,
-                              );
-                            },
-                            child: const Text('Read'),
-                          ),
-                  );
-                },
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
+  int get _chatBadgeCount => _realtime.newMessageConversationCount;
 
   @override
   Widget build(BuildContext context) {
@@ -390,7 +335,13 @@ class _MyHomePageState extends State<MyHomePage> {
                 tooltip: 'Notifications',
                 icon: Icons.notifications_none,
                 count: _notificationBadgeCount,
-                onPressed: _showNotificationsSheet,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const NotificationsPage(),
+                    ),
+                  );
+                },
               );
             },
           ),
