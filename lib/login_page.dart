@@ -35,11 +35,9 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  String? _validateEmail(String? value) {
+  String? _validateIdentity(String? value) {
     final String text = (value ?? '').trim();
-    if (text.isEmpty) return 'Email is required.';
-    final RegExp pattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-    if (!pattern.hasMatch(text)) return 'Enter a valid email address.';
+    if (text.isEmpty) return 'Email or username is required.';
     return null;
   }
 
@@ -69,7 +67,7 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       await AuthApi.login(
-        email: _emailController.text,
+        emailOrUsername: _emailController.text,
         password: _passwordController.text,
       );
 
@@ -147,12 +145,11 @@ class _LoginPageState extends State<LoginPage> {
                             const SizedBox(height: 20),
                             TextFormField(
                               controller: _emailController,
-                              keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
-                              validator: _validateEmail,
+                              validator: _validateIdentity,
                               decoration: _fieldDecoration(
-                                label: 'Email',
-                                prefixIcon: Icons.email_outlined,
+                                label: 'Email or username',
+                                prefixIcon: Icons.alternate_email,
                               ),
                             ),
                             const SizedBox(height: 14),

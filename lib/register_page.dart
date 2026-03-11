@@ -83,7 +83,6 @@ class _RegisterPageState extends State<RegisterPage> {
         name: _nameController.text,
         email: _emailController.text,
         password: _passwordController.text,
-        confirmPassword: _confirmPasswordController.text,
       );
 
       _showMessage('Registration successful.');

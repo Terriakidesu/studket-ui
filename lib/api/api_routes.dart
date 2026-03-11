@@ -3,16 +3,16 @@ import 'api_base_url.dart';
 class ApiRoutes {
   const ApiRoutes._();
 
-  static Uri products() {
-    return _build(path: 'products/');
-  }
-
   static Uri authLogin() {
     return _build(path: 'auth/login');
   }
 
   static Uri authRegister() {
     return _build(path: 'auth/register');
+  }
+
+  static Uri requestSellerAccess() {
+    return _build(path: 'auth/seller-status/request');
   }
 
   static Uri _build({required String path}) {

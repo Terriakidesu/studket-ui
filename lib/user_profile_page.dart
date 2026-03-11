@@ -1,5 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
-import 'components/product_grid_card.dart';
+
+import 'api/api_auth_session.dart';
+import 'api/auth_api.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
@@ -11,61 +16,61 @@ class UserProfilePage extends StatefulWidget {
 enum _ProfileMode { seller, buyer }
 
 class _UserProfilePageState extends State<UserProfilePage> {
-  _ProfileMode _mode = _ProfileMode.buyer;
-  bool _isSellerAccount = false;
+  _ProfileMode _mode = ApiAuthSession.isSeller
+      ? _ProfileMode.seller
+      : _ProfileMode.buyer;
+  bool _isSubmittingSellerRequest = false;
 
-  static const List<Map<String, String>> _myListings = [
-    {
-      'name': 'Minimal Backpack',
-      'location': 'Seattle, WA',
-      'image': 'https://picsum.photos/seed/my_backpack/300',
-    },
-    {
-      'name': 'Ceramic Coffee Mug',
-      'location': 'Chicago, IL',
-      'image': 'https://picsum.photos/seed/my_mug/300',
-    },
-    {
-      'name': 'Laptop Stand',
-      'location': 'New York, NY',
-      'image': 'https://picsum.photos/seed/my_stand/300',
-    },
-    {
-      'name': 'Running Shoes',
-      'location': 'Portland, OR',
-      'image': 'https://picsum.photos/seed/my_shoes/300',
-    },
-  ];
+  bool get _isSellerAccount => ApiAuthSession.isSeller;
 
-  static const List<Map<String, String>> _recentPurchases = [
-    {
-      'name': 'Smart Watch',
-      'location': 'Boston, MA',
-      'image': 'https://picsum.photos/seed/buy_watch/300',
-    },
-    {
-      'name': 'Wooden Chair',
-      'location': 'Nashville, TN',
-      'image': 'https://picsum.photos/seed/buy_chair/300',
-    },
-    {
-      'name': 'Travel Suitcase',
-      'location': 'Miami, FL',
-      'image': 'https://picsum.photos/seed/buy_suitcase/300',
-    },
-    {
-      'name': 'Bluetooth Speaker',
-      'location': 'Denver, CO',
-      'image': 'https://picsum.photos/seed/buy_speaker/300',
-    },
-  ];
+  String get _displayName {
+    final String username = ApiAuthSession.username ?? 'studket_user';
+    return username.replaceAll('_', ' ');
+  }
+
+  String get _subtitle {
+    final String role = ApiAuthSession.marketplaceRole ?? 'buyer';
+    final String accountType = ApiAuthSession.accountType ?? 'user';
+    return '${_capitalize(role)} account • $accountType';
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _requestSellerAccess() async {
+    setState(() {
+      _isSubmittingSellerRequest = true;
+    });
+
+    try {
+      await AuthApi.requestSellerStatus(
+        submissionNote: 'Requested from the Flutter marketplace app.',
+      );
+      _showMessage('Seller access request submitted.');
+    } on TimeoutException {
+      _showMessage('Request timed out. Please try again.');
+    } on SocketException {
+      _showMessage('No internet connection. Check your network and try again.');
+    } on HttpException catch (error) {
+      _showMessage(error.message);
+    } catch (_) {
+      _showMessage('Failed to submit seller request.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingSellerRequest = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final bool isSeller = _isSellerAccount && _mode == _ProfileMode.seller;
-    final List<Map<String, String>> items = isSeller
-        ? _myListings
-        : _recentPurchases;
 
     return Scaffold(
       body: SafeArea(
@@ -77,10 +82,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    const CircleAvatar(
+                    CircleAvatar(
                       radius: 34,
                       backgroundImage: NetworkImage(
-                        'https://i.pravatar.cc/150?img=21',
+                        'https://i.pravatar.cc/150?img=${((ApiAuthSession.accountId ?? 21) % 70) + 1}',
                       ),
                     ),
                     const SizedBox(width: 14),
@@ -89,13 +94,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Alex Morgan',
+                            _displayName,
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            isSeller ? 'Campus Seller' : 'Campus Buyer',
+                            _subtitle,
                             style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(color: Colors.grey[700]),
                           ),
@@ -103,13 +108,15 @@ class _UserProfilePageState extends State<UserProfilePage> {
                           Row(
                             children: [
                               _StatChip(
-                                label: isSeller ? 'Listings' : 'Purchases',
-                                value: isSeller ? '12' : '48',
+                                label: 'Account ID',
+                                value: '${ApiAuthSession.accountId ?? '-'}',
                               ),
                               const SizedBox(width: 8),
                               _StatChip(
-                                label: isSeller ? 'Sold' : 'Saved',
-                                value: isSeller ? '39' : '22',
+                                label: 'Role',
+                                value: _capitalize(
+                                  ApiAuthSession.marketplaceRole ?? 'buyer',
+                                ),
                               ),
                             ],
                           ),
@@ -136,7 +143,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ),
                 ],
                 selected: {_mode},
-                onSelectionChanged: (selection) {
+                onSelectionChanged: (Set<_ProfileMode> selection) {
                   setState(() {
                     _mode = selection.first;
                   });
@@ -150,23 +157,23 @@ class _UserProfilePageState extends State<UserProfilePage> {
                     children: [
                       const Expanded(
                         child: Text(
-                          'Upgrade to a seller account to start posting listings.',
+                          'Your backend currently exposes user auth and seller request endpoints. Submit a seller verification request here.',
                         ),
                       ),
                       const SizedBox(width: 10),
                       FilledButton(
-                        onPressed: () {
-                          setState(() {
-                            _isSellerAccount = true;
-                            _mode = _ProfileMode.seller;
-                          });
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Account upgraded to seller.'),
-                            ),
-                          );
-                        },
-                        child: const Text('Upgrade'),
+                        onPressed: _isSubmittingSellerRequest
+                            ? null
+                            : _requestSellerAccess,
+                        child: _isSubmittingSellerRequest
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Request Seller'),
                       ),
                     ],
                   ),
@@ -174,50 +181,49 @@ class _UserProfilePageState extends State<UserProfilePage> {
               ),
             const SizedBox(height: 12),
             Text(
-              isSeller ? 'My Listings' : 'Recent Purchases',
+              isSeller ? 'Seller Access' : 'Buyer Access',
               style: Theme.of(
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
+            const SizedBox(height: 6),
+            Text(
+              'The current backend reference only exposes user auth endpoints publicly. Marketplace feed, chat, and review APIs are management-only, so no listing or purchase data is rendered here.',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+            ),
             const SizedBox(height: 10),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: _myListings.length,
-              gridDelegate: kProductGridDelegate,
-              itemBuilder: (context, index) {
-                final item = items[index];
-                return ProductGridCard(
-                  name: item['name']!,
-                  location: item['location']!,
-                  imageUrl: item['image']!,
-                );
-              },
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  isSeller
+                      ? 'Your account is marked as a seller in the current auth session.'
+                      : 'No public marketplace data is available for buyer accounts yet.',
+                ),
+              ),
             ),
             const SizedBox(height: 14),
             Card(
               child: Column(
                 children: [
                   ListTile(
-                    leading: const Icon(Icons.settings_outlined),
-                    title: Text('Settings'),
-                    trailing: const Icon(Icons.chevron_right),
+                    leading: const Icon(Icons.badge_outlined),
+                    title: Text(ApiAuthSession.email ?? 'No email in session'),
                   ),
                   const Divider(height: 1),
                   ListTile(
-                    leading: Icon(
-                      isSeller
-                          ? Icons.analytics_outlined
-                          : Icons.receipt_long_outlined,
-                    ),
-                    title: Text(isSeller ? 'Sales Insights' : 'Orders'),
-                    trailing: const Icon(Icons.chevron_right),
+                    leading: const Icon(Icons.person_outline),
+                    title: Text(ApiAuthSession.username ?? 'No username'),
                   ),
                   const Divider(height: 1),
                   const ListTile(
-                    leading: Icon(Icons.help_outline_rounded),
-                    title: Text('Help & Support'),
-                    trailing: Icon(Icons.chevron_right),
+                    leading: Icon(Icons.info_outline),
+                    title: Text('User API integration active'),
+                    subtitle: Text(
+                      'Register, login, and seller verification request are wired to the backend.',
+                    ),
                   ),
                 ],
               ),
@@ -226,6 +232,11 @@ class _UserProfilePageState extends State<UserProfilePage> {
         ),
       ),
     );
+  }
+
+  String _capitalize(String value) {
+    if (value.isEmpty) return value;
+    return value[0].toUpperCase() + value.substring(1);
   }
 }
 

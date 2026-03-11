@@ -1,18 +1,8 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
-import 'api/api_auth_session.dart';
-import 'api/api_base_url.dart';
-import 'api/api_routes.dart';
-import 'chats_page.dart';
-import 'components/product_grid_card.dart';
-import 'components/studket_app_bar.dart';
 import 'authentication_page.dart';
-import 'product_details_page.dart';
+import 'chats_page.dart';
+import 'components/studket_app_bar.dart';
 import 'user_profile_page.dart';
 
 void main() {
@@ -61,72 +51,6 @@ class _AppEntryPageState extends State<AppEntryPage> {
   }
 }
 
-class ProductItem {
-  const ProductItem({
-    required this.id,
-    required this.name,
-    required this.priceLabel,
-    required this.location,
-    required this.imageUrl,
-    required this.description,
-  });
-
-  final String id;
-  final String name;
-  final String priceLabel;
-  final String location;
-  final String imageUrl;
-  final String description;
-
-  factory ProductItem.fromJson(Map<String, dynamic> json) {
-    final String name = (json['name'] ?? json['title'] ?? 'Untitled Product')
-        .toString();
-    final String location =
-        (json['location'] ?? json['address'] ?? 'Location unavailable')
-            .toString();
-    final String imageUrl =
-        (json['image'] ??
-                json['image_url'] ??
-                json['thumbnail'] ??
-                'https://picsum.photos/seed/default_product/300')
-            .toString();
-    final String description =
-        (json['description'] ??
-                '$name in excellent condition. Message the seller for details.')
-            .toString();
-
-    return ProductItem(
-      id: (json['id'] ?? json['product_id'] ?? name.hashCode).toString(),
-      name: name,
-      priceLabel: _formatPeso(json['price']),
-      location: location,
-      imageUrl: imageUrl,
-      description: description,
-    );
-  }
-
-  static String _formatPeso(dynamic rawPrice) {
-    if (rawPrice is num) {
-      final String amount = rawPrice % 1 == 0
-          ? rawPrice.toStringAsFixed(0)
-          : rawPrice.toStringAsFixed(2);
-      return '₱$amount';
-    }
-
-    final String text = (rawPrice ?? '').toString().trim();
-    if (text.isEmpty) return '₱0';
-
-    final String numeric = text.replaceAll(RegExp(r'[^0-9.]'), '');
-    final num? parsed = num.tryParse(numeric);
-    if (parsed == null) return '₱0';
-
-    final String amount = parsed % 1 == 0
-        ? parsed.toStringAsFixed(0)
-        : parsed.toStringAsFixed(2);
-    return '₱$amount';
-  }
-}
-
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
 
@@ -138,6 +62,7 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   int currentPageIndex = 0;
+  final TextEditingController _searchController = TextEditingController();
   final List<String> _categories = const [
     'Electronics',
     'Home',
@@ -147,146 +72,25 @@ class _MyHomePageState extends State<MyHomePage> {
     'Beauty',
   ];
   final Set<String> _selectedCategories = <String>{};
-  final List<String> _sellerNames = const [
-    'Ava Thompson',
-    'Liam Carter',
-    'Noah Reyes',
-    'Mia Brooks',
-    'Emma Gray',
-  ];
-
-  bool _isLoading = true;
-  String? _loadError;
-  List<ProductItem> _products = const <ProductItem>[];
-
-  void _showRequestError(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
-  }
 
   @override
   void initState() {
     super.initState();
-    _fetchProducts();
+    _applyFilters();
   }
 
-  Future<void> _fetchProducts({bool showLoader = true}) async {
-    if (showLoader) {
-      setState(() {
-        _isLoading = true;
-        _loadError = null;
-      });
-    } else {
-      setState(() {
-        _loadError = null;
-      });
-    }
-
-    try {
-      final Uri uri = ApiRoutes.products();
-      final http.Response response = await http
-          .get(uri, headers: ApiAuthSession.authHeaders())
-          .timeout(kApiRequestTimeout);
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('HTTP ${response.statusCode}');
-      }
-
-      final dynamic decoded = jsonDecode(response.body);
-      if (decoded is! List) {
-        throw const FormatException('Products response is not a list');
-      }
-
-      final List<ProductItem> parsed = decoded
-          .whereType<Map>()
-          .map((item) => ProductItem.fromJson(Map<String, dynamic>.from(item)))
-          .toList();
-
-      if (!mounted) return;
-      setState(() {
-        _products = parsed;
-      });
-    } on TimeoutException {
-      const String message =
-          'Request timed out. Pull to refresh and try again.';
-      if (!mounted) return;
-      setState(() {
-        _loadError = message;
-      });
-      _showRequestError(message);
-    } on SocketException {
-      const String message =
-          'No internet connection. Check your network and try again.';
-      if (!mounted) return;
-      setState(() {
-        _loadError = message;
-      });
-      _showRequestError(message);
-    } on HttpException catch (error) {
-      final String message = 'Server error (${error.message}). Try again.';
-      if (!mounted) return;
-      setState(() {
-        _loadError = message;
-      });
-      _showRequestError(message);
-    } on FormatException {
-      const String message = 'Invalid server response. Please try again.';
-      if (!mounted) return;
-      setState(() {
-        _loadError = message;
-      });
-      _showRequestError(message);
-    } catch (error) {
-      const String message =
-          'Failed to load products. Pull to refresh and try again.';
-      if (!mounted) return;
-      setState(() {
-        _loadError = message;
-      });
-      _showRequestError(message);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _refreshProducts() async {
-    await _fetchProducts(showLoader: false);
+    _applyFilters();
   }
 
-  void _openProductDetails(ProductItem product, int index) {
-    final String seed = product.name
-        .toLowerCase()
-        .replaceAll(' ', '_')
-        .replaceAll(',', '');
-    final List<String> gallery = List.generate(
-      4,
-      (i) => 'https://picsum.photos/seed/${seed}_${index}_$i/900',
-    );
-    final String sellerName = _sellerNames[index % _sellerNames.length];
-    final double rating = 3.5 + ((index % 4) * 0.5);
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProductDetailsPage(
-          productName: product.name,
-          productPrice: product.priceLabel,
-          productLocation: product.location,
-          productDescription: product.description,
-          imageUrls: gallery,
-          sellerName: sellerName,
-          sellerAvatarUrl: 'https://i.pravatar.cc/150?img=${(index % 70) + 1}',
-          sellerRating: rating,
-        ),
-      ),
-    );
+  void _applyFilters() {
+    setState(() {});
   }
 
   @override
@@ -306,20 +110,22 @@ class _MyHomePageState extends State<MyHomePage> {
       body: Center(
         child: currentPageIndex == 0
             ? Padding(
-                padding: const EdgeInsets.all(20.0),
+                padding: const EdgeInsets.all(20),
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.start,
                   children: [
                     Material(
                       elevation: 2,
                       borderRadius: BorderRadius.circular(16),
                       color: Colors.white,
                       child: TextField(
+                        controller: _searchController,
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: (_) => _applyFilters(),
                         decoration: InputDecoration(
                           hintText: 'Search products',
                           prefixIcon: const Icon(Icons.search),
                           suffixIcon: IconButton(
-                            onPressed: () {},
+                            onPressed: _applyFilters,
                             icon: const Icon(Icons.tune),
                           ),
                           filled: true,
@@ -341,8 +147,8 @@ class _MyHomePageState extends State<MyHomePage> {
                       child: SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Row(
-                          children: _categories.map((category) {
-                            final isSelected = _selectedCategories.contains(
+                          children: _categories.map((String category) {
+                            final bool isSelected = _selectedCategories.contains(
                               category,
                             );
                             return Padding(
@@ -350,7 +156,7 @@ class _MyHomePageState extends State<MyHomePage> {
                               child: FilterChip(
                                 label: Text(category),
                                 selected: isSelected,
-                                onSelected: (selected) {
+                                onSelected: (bool selected) {
                                   setState(() {
                                     if (selected) {
                                       _selectedCategories.add(category);
@@ -358,6 +164,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                       _selectedCategories.remove(category);
                                     }
                                   });
+                                  _applyFilters();
                                 },
                               ),
                             );
@@ -365,69 +172,31 @@ class _MyHomePageState extends State<MyHomePage> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'User API integration is currently limited to register, login, and seller verification request. The marketplace feed stays local until public listing endpoints exist.',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+                    ),
                     const SizedBox(height: 16),
                     Expanded(
                       child: RefreshIndicator(
                         onRefresh: _refreshProducts,
-                        child: Builder(
-                          builder: (context) {
-                            if (_isLoading) {
-                              return const Center(
-                                child: CircularProgressIndicator(),
-                              );
-                            }
-
-                            if (_loadError != null && _products.isEmpty) {
-                              return ListView(
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                children: [
-                                  SizedBox(
-                                    height:
-                                        MediaQuery.of(context).size.height *
-                                        0.4,
-                                    child: Center(
-                                      child: Text(
-                                        _loadError!,
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            }
-
-                            if (_products.isEmpty) {
-                              return ListView(
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                children: const [
-                                  SizedBox(
-                                    height: 280,
-                                    child: Center(
-                                      child: Text('No products found.'),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            }
-
-                            return GridView.builder(
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              itemCount: _products.length,
-                              gridDelegate: kProductGridDelegate,
-                              itemBuilder: (context, index) {
-                                final ProductItem product = _products[index];
-                                return ProductGridCard(
-                                  name: product.name,
-                                  price: product.priceLabel,
-                                  location: product.location,
-                                  imageUrl: product.imageUrl,
-                                  onTap: () {
-                                    _openProductDetails(product, index);
-                                  },
-                                );
-                              },
-                            );
-                          },
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: const [
+                            SizedBox(height: 180),
+                            Center(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 24),
+                                child: Text(
+                                  'No public listing feed is available for normal user accounts in the current backend. Sign in works, but marketplace inventory remains unavailable until user-facing listing endpoints exist.',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -448,49 +217,22 @@ class _MyHomePageState extends State<MyHomePage> {
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home),
-            label: "Home",
+            label: 'Home',
           ),
           NavigationDestination(
             icon: Icon(Icons.account_circle_outlined),
             selectedIcon: Icon(Icons.account_circle),
-            label: "Profile",
+            label: 'Profile',
           ),
         ],
       ),
-      floatingActionButton: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          FloatingActionButton(
-            onPressed: () {
-              Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => const ChatsPage()));
-            },
-            child: const Icon(Icons.chat_bubble_outline),
-          ),
-          Positioned(
-            right: -2,
-            top: -4,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.red,
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              constraints: const BoxConstraints(minWidth: 22),
-              child: const Text(
-                '3',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ),
-        ],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const ChatsPage()));
+        },
+        child: const Icon(Icons.chat_bubble_outline),
       ),
     );
   }
