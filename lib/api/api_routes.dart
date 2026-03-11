@@ -15,12 +15,24 @@ class ApiRoutes {
     return _build(path: 'auth/seller-status/request');
   }
 
+  static Uri elevateSellerAccess() {
+    return _build(path: 'auth/seller-status/elevate');
+  }
+
   static Uri conversations() {
     return _build(path: 'conversations/');
   }
 
   static Uri messages() {
     return _build(path: 'messages/');
+  }
+
+  static Uri listings() {
+    return _build(path: 'listings/');
+  }
+
+  static Uri listingMediaUpload() {
+    return _build(path: 'listing-media/upload');
   }
 
   static Uri listingsFeed({

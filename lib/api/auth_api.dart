@@ -84,6 +84,37 @@ class AuthApi {
     }
   }
 
+  static Future<void> elevateToSeller() async {
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null) {
+      throw const HttpException('No authenticated account id found.');
+    }
+
+    final http.Response response = await _postJsonFollowRedirect(
+      ApiRoutes.elevateSellerAccess(),
+      <String, dynamic>{'account_id': accountId},
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(_extractErrorMessage(response, isLogin: false));
+    }
+
+    _storeSessionFromAuthResponse(response);
+
+    if (!ApiAuthSession.isSeller) {
+      ApiAuthSession.setAccount(
+        accountId: ApiAuthSession.accountId,
+        email: ApiAuthSession.email,
+        username: ApiAuthSession.username,
+        accountType: ApiAuthSession.accountType,
+        marketplaceRole: 'seller',
+        trustedSeller: ApiAuthSession.trustedSeller,
+      );
+    }
+
+    await ApiSessionStorage.saveCurrentSession();
+  }
+
   static String _extractErrorMessage(
     http.Response response, {
     required bool isLogin,

@@ -16,6 +16,7 @@ import 'chats_page.dart';
 import 'components/studket_app_bar.dart';
 import 'notifications_page.dart';
 import 'user_profile_page.dart';
+import 'listing_editor_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -291,6 +292,18 @@ class _MyHomePageState extends State<MyHomePage> {
     }).toList(growable: false);
   }
 
+  List<FeedListing> get _visibleSaleFeedItems {
+    return _visibleFeedItems
+        .where((FeedListing item) => item.listingType != 'looking_for')
+        .toList(growable: false);
+  }
+
+  List<FeedListing> get _visibleLookingForItems {
+    return _visibleFeedItems
+        .where((FeedListing item) => item.listingType == 'looking_for')
+        .toList(growable: false);
+  }
+
   void _toggleTag(String tag, bool selected) {
     setState(() {
       if (selected) {
@@ -317,6 +330,101 @@ class _MyHomePageState extends State<MyHomePage> {
       .length;
 
   int get _chatBadgeCount => _realtime.newMessageConversationCount;
+
+  bool get _showSellerPostButton =>
+      currentPageIndex == 0 && ApiAuthSession.isSeller;
+
+  Future<void> _showSellerPostActions() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Create Post',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Posting is available only for seller accounts.',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(
+                    child: Icon(Icons.sell_outlined),
+                  ),
+                  title: const Text('Create Listing'),
+                  subtitle: const Text(
+                    'Post an item for sale as a seller account.',
+                  ),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    final bool? created = await Navigator.of(this.context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => const ListingEditorPage(),
+                      ),
+                    );
+                    if (created == true) {
+                      await _fetchFeed();
+                      if (!mounted) {
+                        return;
+                      }
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        const SnackBar(content: Text('Listing posted.')),
+                      );
+                    }
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(
+                    child: Icon(Icons.search_outlined),
+                  ),
+                  title: const Text('Create Looking For Post'),
+                  subtitle: const Text(
+                    'Post a buyer demand request under your seller account.',
+                  ),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    final bool? created = await Navigator.of(this.context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => const ListingEditorPage(
+                          listingType: 'looking_for',
+                        ),
+                      ),
+                    );
+                    if (created == true) {
+                      await _fetchFeed();
+                      if (!mounted) {
+                        return;
+                      }
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Looking for post created.'),
+                        ),
+                      );
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -515,198 +623,83 @@ class _MyHomePageState extends State<MyHomePage> {
                                       ),
                                     )
                                   else
-                                    ..._visibleFeedItems.map((FeedListing item) {
-                                      return Card(
-                                        margin: const EdgeInsets.only(
-                                          bottom: 12,
-                                        ),
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(16),
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Row(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Expanded(
-                                                    child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      children: [
-                                                        Text(
-                                                          item.title,
-                                                          style:
-                                                              Theme.of(context)
-                                                                  .textTheme
-                                                                  .titleMedium
-                                                                  ?.copyWith(
-                                                                    fontWeight:
-                                                                        FontWeight
-                                                                            .w700,
-                                                                  ),
-                                                        ),
-                                                        const SizedBox(
-                                                          height: 4,
-                                                        ),
-                                                        Text(
-                                                          _formatPrice(
-                                                            item.price,
-                                                          ),
-                                                          style:
-                                                              Theme.of(context)
-                                                                  .textTheme
-                                                                  .titleSmall
-                                                                  ?.copyWith(
-                                                                    color: Theme.of(
-                                                                      context,
-                                                                    ).colorScheme.primary,
-                                                                    fontWeight:
-                                                                        FontWeight
-                                                                            .w700,
-                                                                  ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                  Chip(
-                                                    label: Text(item.status),
-                                                    visualDensity:
-                                                        VisualDensity.compact,
-                                                  ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 8),
-                                              Text(
-                                                item.description.isEmpty
-                                                    ? 'No description provided.'
-                                                    : item.description,
-                                              ),
-                                              const SizedBox(height: 10),
-                                              Wrap(
-                                                spacing: 8,
-                                                runSpacing: 8,
-                                                children: [
-                                                  _MetaPill(
-                                                    icon: Icons.storefront,
-                                                    label: item.sellerUsername,
-                                                  ),
-                                                  _MetaPill(
-                                                    icon: Icons.location_on_outlined,
-                                                    label: item.campus,
-                                                  ),
-                                                  _MetaPill(
-                                                    icon: Icons.category_outlined,
-                                                    label: item.listingType,
-                                                  ),
-                                                  if (item.sellerAverageRating !=
-                                                      null)
-                                                    _MetaPill(
-                                                      icon: Icons.star_outline,
-                                                      label:
-                                                          '${item.sellerAverageRating} (${item.sellerReviewCount})',
-                                                    ),
-                                                  if (item.sellerIsTrusted)
-                                                    const _MetaPill(
-                                                      icon: Icons.verified,
-                                                      label: 'Trusted seller',
-                                                    ),
-                                                ],
-                                              ),
-                                              if (item.tags.isNotEmpty) ...[
-                                                const SizedBox(height: 10),
-                                                Wrap(
-                                                  spacing: 8,
-                                                  runSpacing: 8,
-                                                  children: item.tags
-                                                      .map(
-                                                        (String tag) => Chip(
-                                                          label: Text(tag),
-                                                          visualDensity:
-                                                              VisualDensity
-                                                                  .compact,
-                                                        ),
-                                                      )
-                                                      .toList(growable: false),
-                                                ),
-                                              ],
-                                            ],
-                                          ),
-                                        ),
-                                      );
-                                    }),
+                                    ..._visibleSaleFeedItems.map(
+                                      (FeedListing item) => _buildListingCard(
+                                        context,
+                                        item,
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),
                           ),
                           Padding(
                             padding: const EdgeInsets.all(20),
-                            child: ListView(
-                              children: [
-                                Card(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Looking For',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleLarge
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w700,
-                                              ),
+                            child: RefreshIndicator(
+                              onRefresh: _fetchFeed,
+                              child: ListView(
+                                children: [
+                                  Card(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(16),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Looking For',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleLarge
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            _selectedTags.isEmpty
+                                                ? 'Wanted-item posts from the live listings feed.'
+                                                : 'Filtered by: ${_selectedTags.join(', ')}',
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  if (_isLoadingFeed)
+                                    const Padding(
+                                      padding: EdgeInsets.only(top: 80),
+                                      child: Center(
+                                        child: CircularProgressIndicator(),
+                                      ),
+                                    )
+                                  else if (_feedError != null)
+                                    Card(
+                                      color: Colors.amber[50],
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(16),
+                                        child: Text(_feedError!),
+                                      ),
+                                    )
+                                  else if (_visibleLookingForItems.isEmpty)
+                                    const Padding(
+                                      padding: EdgeInsets.only(top: 80),
+                                      child: Center(
+                                        child: Text(
+                                          'No looking for posts matched the current search or tag filters.',
+                                          textAlign: TextAlign.center,
                                         ),
-                                        const SizedBox(height: 8),
-                                        const Text(
-                                          'Use this tab for buyer demand posts and wanted-item discovery once the user-facing listing flows are available for your account type.',
-                                        ),
-                                      ],
+                                      ),
+                                    )
+                                  else
+                                    ..._visibleLookingForItems.map(
+                                      (FeedListing item) => _buildListingCard(
+                                        context,
+                                        item,
+                                      ),
                                     ),
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                Card(
-                                  child: ListTile(
-                                    leading: const Icon(Icons.search_outlined),
-                                    title: const Text('Looking for a used item'),
-                                    subtitle: const Text(
-                                      'This area is intended for `looking_for` listing posts described in the listings API.',
-                                    ),
-                                  ),
-                                ),
-                                Card(
-                                  child: ListTile(
-                                    leading: const Icon(Icons.sell_outlined),
-                                    title: const Text('Listing Type: looking_for'),
-                                    subtitle: const Text(
-                                      'The backend documentation treats wanted-item posts as a listings variant using `listing_type = "looking_for"`.',
-                                    ),
-                                  ),
-                                ),
-                                Card(
-                                  child: ListTile(
-                                    leading: const Icon(Icons.info_outline),
-                                    title: const Text('Current client status'),
-                                    subtitle: const Text(
-                                      'This tab is now reserved for Looking For flows instead of endpoint overview content.',
-                                    ),
-                                  ),
-                                ),
-                                Card(
-                                  color: Colors.blue[50],
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(16),
-                                    child: Text(
-                                      'Next step for this tab: add create/search UI specifically for `looking_for` posts once you want that workflow implemented.',
-                                    ),
-                                  ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ],
@@ -717,6 +710,12 @@ class _MyHomePageState extends State<MyHomePage> {
               )
             : const UserProfilePage(),
       ),
+      floatingActionButton: _showSellerPostButton
+          ? FloatingActionButton(
+              onPressed: _showSellerPostActions,
+              child: const Icon(Icons.add),
+            )
+          : null,
       bottomNavigationBar: NavigationBar(
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         selectedIndex: currentPageIndex,
@@ -737,6 +736,98 @@ class _MyHomePageState extends State<MyHomePage> {
             label: 'Profile',
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildListingCard(BuildContext context, FeedListing item) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.title,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatPrice(item.price),
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Chip(
+                  label: Text(item.status),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              item.description.isEmpty
+                  ? 'No description provided.'
+                  : item.description,
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MetaPill(icon: Icons.storefront, label: item.sellerUsername),
+                _MetaPill(
+                  icon: Icons.location_on_outlined,
+                  label: item.campus,
+                ),
+                _MetaPill(
+                  icon: Icons.category_outlined,
+                  label: item.listingType,
+                ),
+                if (item.sellerAverageRating != null)
+                  _MetaPill(
+                    icon: Icons.star_outline,
+                    label:
+                        '${item.sellerAverageRating} (${item.sellerReviewCount})',
+                  ),
+                if (item.sellerIsTrusted)
+                  const _MetaPill(
+                    icon: Icons.verified,
+                    label: 'Trusted seller',
+                  ),
+              ],
+            ),
+            if (item.tags.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: item.tags
+                    .map(
+                      (String tag) => Chip(
+                        label: Text(tag),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

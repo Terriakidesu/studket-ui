@@ -1,0 +1,148 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:http/http.dart' as http;
+
+import 'api_auth_session.dart';
+import 'api_base_url.dart';
+import 'api_routes.dart';
+
+class ListingsApi {
+  const ListingsApi._();
+
+  static Future<Map<String, dynamic>> createListing({
+    required String title,
+    required String description,
+    required String listingType,
+    num? price,
+    String? condition,
+    int? quantityAvailable,
+    int? maxDailyLimit,
+    bool? restockable,
+    List<String> tags = const <String>[],
+  }) async {
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null) {
+      throw const HttpException('No authenticated account id found.');
+    }
+
+    final String? normalizedCondition = condition?.trim();
+    final Map<String, dynamic> payload = <String, dynamic>{
+      'seller_id': accountId,
+      'title': title.trim(),
+      'description': description.trim(),
+      'listing_type': listingType,
+      'status': 'available',
+    };
+    if (price != null) {
+      payload['price'] = price;
+    }
+    if ((normalizedCondition ?? '').isNotEmpty) {
+      payload['condition'] = normalizedCondition;
+    }
+    if (tags.isNotEmpty) {
+      payload['tags'] = tags;
+    }
+    if (quantityAvailable != null) {
+      payload['quantity_available'] = quantityAvailable;
+    }
+    if (maxDailyLimit != null) {
+      payload['max_daily_limit'] = maxDailyLimit;
+    }
+    if (restockable != null) {
+      payload['restockable'] = restockable;
+    }
+
+    final http.Response response = await http
+        .post(
+          ApiRoutes.listings(),
+          headers: <String, String>{
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            ...ApiAuthSession.authHeaders(),
+          },
+          body: jsonEncode(payload),
+        )
+        .timeout(kApiRequestTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(_extractErrorMessage(response));
+    }
+
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    return <String, dynamic>{};
+  }
+
+  static Future<void> uploadListingMedia({
+    required int listingId,
+    required List<File> files,
+  }) async {
+    for (int index = 0; index < files.length; index++) {
+      final File file = files[index];
+      final http.MultipartRequest request = http.MultipartRequest(
+        'POST',
+        ApiRoutes.listingMediaUpload(),
+      );
+      request.headers.addAll(ApiAuthSession.authHeaders());
+      request.fields['listing_id'] = '$listingId';
+      request.fields['sort_order'] = '$index';
+      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+
+      final http.StreamedResponse streamed = await request.send().timeout(
+        kApiRequestTimeout,
+      );
+      final http.Response response = await http.Response.fromStream(streamed);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractErrorMessage(response));
+      }
+    }
+  }
+
+  static int? extractListingId(Map<String, dynamic> json) {
+    final dynamic value = json['listing_id'] ?? json['id'] ?? json['item_id'];
+    if (value is int) {
+      return value;
+    }
+    return int.tryParse('$value');
+  }
+
+  static String _extractErrorMessage(http.Response response) {
+    try {
+      final dynamic decoded = jsonDecode(response.body);
+      final String? message = _extractMessage(decoded);
+      if (message != null && message.isNotEmpty) {
+        return message;
+      }
+    } catch (_) {}
+    return 'Request failed (HTTP ${response.statusCode}).';
+  }
+
+  static String? _extractMessage(dynamic decoded) {
+    if (decoded is String && decoded.trim().isNotEmpty) {
+      return decoded.trim();
+    }
+
+    if (decoded is Map<String, dynamic>) {
+      for (final dynamic value in <dynamic>[
+        decoded['message'],
+        decoded['error'],
+        decoded['detail'],
+      ]) {
+        final String? nested = _extractMessage(value);
+        if (nested != null && nested.isNotEmpty) {
+          return nested;
+        }
+      }
+    }
+
+    if (decoded is List && decoded.isNotEmpty) {
+      return _extractMessage(decoded.first);
+    }
+
+    return null;
+  }
+}
