@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'api/listings_api.dart';
+import 'api/tags_api.dart';
 
 class ListingEditorPage extends StatefulWidget {
   const ListingEditorPage({
@@ -25,6 +26,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _priceController = TextEditingController();
+  final TextEditingController _customTagController = TextEditingController();
   final List<File> _mediaFiles = <File>[];
 
   static const List<String> _conditions = <String>[
@@ -40,19 +42,22 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     'stock_item',
   ];
 
-  static const List<String> _availableTags = <String>[
-    'books',
-    'electronics',
-    'dorm',
-    'fashion',
+  static const List<String> _fallbackTags = <String>[
     'food',
-    'services',
-    'looking_for',
+    'beverages',
+    'school_supplies',
+    'books',
+    'academic_materials',
+    'gadgets',
+    'electronics',
+    'clothing',
+    'second_hand_items',
   ];
 
   String _selectedCondition = _conditions[2];
   String _selectedListingType = _saleListingTypes.first;
   final Set<String> _selectedTags = <String>{};
+  List<String> _availableTags = _fallbackTags;
   bool _isSubmitting = false;
   String? _submitError;
 
@@ -61,9 +66,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
   @override
   void initState() {
     super.initState();
-    if (_isLookingForMode) {
-      _selectedTags.add('looking_for');
-    }
+    unawaited(_loadPopularTags());
   }
 
   @override
@@ -71,6 +74,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     _titleController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
+    _customTagController.dispose();
     super.dispose();
   }
 
@@ -173,6 +177,20 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     });
   }
 
+  Future<void> _loadPopularTags() async {
+    try {
+      final List<String> tags = await TagsApi.fetchPopularTags();
+      if (tags.isEmpty || !mounted) {
+        return;
+      }
+      setState(() {
+        _availableTags = tags.where((String tag) => tag != 'looking_for').toList(
+          growable: false,
+        );
+      });
+    } catch (_) {}
+  }
+
   String _labelize(String value) {
     return value
         .split('_')
@@ -183,6 +201,16 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
         .join(' ');
   }
 
+  String _normalizeTag(String value) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll(RegExp(r'[^a-z0-9_]'), '')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+  }
+
   void _toggleTag(String tag, bool selected) {
     setState(() {
       if (selected) {
@@ -190,6 +218,23 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
       } else {
         _selectedTags.remove(tag);
       }
+    });
+  }
+
+  void _addCustomTag() {
+    final String normalized = _normalizeTag(_customTagController.text);
+    if (normalized.isEmpty) {
+      return;
+    }
+    setState(() {
+      _selectedTags.add(normalized);
+      _customTagController.clear();
+    });
+  }
+
+  void _removeTag(String tag) {
+    setState(() {
+      _selectedTags.remove(tag);
     });
   }
 
@@ -327,25 +372,74 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
               const SizedBox(height: 16),
               _SectionCard(
                 title: 'Tags',
-                subtitle: 'Choose tags so the post lands in the right feed filters.',
-                child: Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: _availableTags
-                      .where(
-                        (String tag) =>
-                            !isLookingFor || tag == 'looking_for',
-                      )
-                      .map(
-                        (String tag) => FilterChip(
-                          label: Text(_labelize(tag)),
-                          selected: _selectedTags.contains(tag),
-                          onSelected: (bool selected) {
-                            _toggleTag(tag, selected);
-                          },
+                subtitle: 'Use quick tags or add your own so the post lands in the right feed filters.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _customTagController,
+                            textInputAction: TextInputAction.done,
+                            onFieldSubmitted: (_) => _addCustomTag(),
+                            decoration: _fieldDecoration(
+                              'Custom Tag',
+                              hintText: 'board_games, lab_goggles, dorm_decor',
+                            ),
+                          ),
                         ),
-                      )
-                      .toList(growable: false),
+                        const SizedBox(width: 12),
+                        FilledButton.tonalIcon(
+                          onPressed: _addCustomTag,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: _availableTags
+                          .map(
+                            (String tag) => FilterChip(
+                              label: Text(_labelize(tag)),
+                              selected: _selectedTags.contains(tag),
+                              onSelected: (bool selected) {
+                                _toggleTag(tag, selected);
+                              },
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                    if (_selectedTags.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        'Selected Tags',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF4B5563),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _selectedTags
+                            .map(
+                              (String tag) => InputChip(
+                                label: Text(tag),
+                                onDeleted: () {
+                                  _removeTag(tag);
+                                },
+                              ),
+                            )
+                            .toList(growable: false),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               const SizedBox(height: 16),

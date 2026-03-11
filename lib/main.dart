@@ -6,12 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'app_notifications.dart';
+import 'app_entry_page.dart';
 import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
 import 'api/api_routes.dart';
-import 'api/api_session_storage.dart';
+import 'api/tags_api.dart';
 import 'api/user_realtime_service.dart';
-import 'authentication_page.dart';
 import 'chats_page.dart';
 import 'components/studket_app_bar.dart';
 import 'notifications_page.dart';
@@ -35,57 +35,6 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
       ),
       home: const AppEntryPage(),
-    );
-  }
-}
-
-class AppEntryPage extends StatefulWidget {
-  const AppEntryPage({super.key});
-
-  @override
-  State<AppEntryPage> createState() => _AppEntryPageState();
-}
-
-class _AppEntryPageState extends State<AppEntryPage> {
-  bool _isAuthenticated = false;
-  bool _isRestoringSession = true;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_restoreSession());
-  }
-
-  Future<void> _restoreSession() async {
-    final bool restored = await ApiSessionStorage.restoreSession();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _isAuthenticated = restored;
-      _isRestoringSession = false;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_isRestoringSession) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    if (_isAuthenticated) {
-      return const MyHomePage(title: 'Studket');
-    }
-
-    return AuthenticationPage(
-      onAuthenticated: () {
-        if (!mounted) return;
-        setState(() {
-          _isAuthenticated = true;
-        });
-      },
     );
   }
 }
@@ -157,17 +106,21 @@ class _MyHomePageState extends State<MyHomePage> {
   final TextEditingController _searchController = TextEditingController();
   final Set<String> _selectedTags = <String>{};
 
-  static const List<String> _feedTags = <String>[
-    'books',
-    'electronics',
-    'dorm',
-    'fashion',
+  static const List<String> _fallbackFeedTags = <String>[
     'food',
-    'services',
+    'beverages',
+    'school_supplies',
+    'books',
+    'academic_materials',
+    'gadgets',
+    'electronics',
+    'clothing',
+    'second_hand_items',
     'looking_for',
   ];
 
   bool _isLoadingFeed = false;
+  List<String> _feedTags = _fallbackFeedTags;
   String? _feedError;
   List<FeedListing> _feedItems = const <FeedListing>[];
 
@@ -175,7 +128,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     unawaited(_realtime.ensureConnected());
-    unawaited(_fetchFeed());
+    unawaited(_refreshFeedView());
   }
 
   @override
@@ -256,6 +209,24 @@ class _MyHomePageState extends State<MyHomePage> {
         });
       }
     }
+  }
+
+  Future<void> _refreshFeedView() async {
+    await _loadPopularTags();
+    await _fetchFeed();
+  }
+
+  Future<void> _loadPopularTags() async {
+    try {
+      final List<String> tags = await TagsApi.fetchPopularTags();
+      if (tags.isEmpty || !mounted) {
+        return;
+      }
+      setState(() {
+        _feedTags = tags;
+        _selectedTags.removeWhere((String tag) => !_feedTags.contains(tag));
+      });
+    } catch (_) {}
   }
 
   String _extractFeedError(http.Response response) {
@@ -501,7 +472,7 @@ class _MyHomePageState extends State<MyHomePage> {
                           Padding(
                             padding: const EdgeInsets.all(20),
                             child: RefreshIndicator(
-                              onRefresh: _fetchFeed,
+                              onRefresh: _refreshFeedView,
                               child: ListView(
                                 children: [
                                   TextField(
@@ -527,58 +498,51 @@ class _MyHomePageState extends State<MyHomePage> {
                                     ),
                                   ),
                                   const SizedBox(height: 16),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: _feedTags.map((String tag) {
-                                      return FilterChip(
-                                        label: Text(tag),
-                                        selected: _selectedTags.contains(tag),
-                                        onSelected: (bool selected) {
-                                          _toggleTag(tag, selected);
-                                        },
-                                      );
-                                    }).toList(),
+                                  SizedBox(
+                                    height: 40,
+                                    child: ListView.separated(
+                                      scrollDirection: Axis.horizontal,
+                                      itemCount: _feedTags.length,
+                                      separatorBuilder: (_, _) =>
+                                          const SizedBox(width: 8),
+                                      itemBuilder:
+                                          (BuildContext context, int index) {
+                                            final String tag = _feedTags[index];
+                                            return FilterChip(
+                                              label: Text(tag),
+                                              selected: _selectedTags.contains(
+                                                tag,
+                                              ),
+                                              onSelected: (bool selected) {
+                                                _toggleTag(tag, selected);
+                                              },
+                                            );
+                                          },
+                                    ),
                                   ),
-                                  const SizedBox(height: 16),
-                                  Card(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(16),
-                                      child: Row(
-                                        children: [
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  'Listings Feed',
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .titleMedium
-                                                      ?.copyWith(
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                      ),
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Text(
-                                                  _selectedTags.isEmpty
-                                                      ? 'Showing all feed tags'
-                                                      : 'Filtering by: ${_selectedTags.join(', ')}',
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          FilledButton.tonal(
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          _selectedTags.isEmpty
+                                              ? 'Showing all feed tags'
+                                              : 'Filtering by: ${_selectedTags.join(', ')}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                color: Colors.grey[700],
+                                              ),
+                                        ),
+                                      ),
+                                      FilledButton.tonal(
                                             onPressed: _isLoadingFeed
                                                 ? null
-                                                : _fetchFeed,
-                                            child: const Text('Reload'),
-                                          ),
-                                        ],
+                                            : _refreshFeedView,
+                                        child: const Text('Reload'),
                                       ),
-                                    ),
+                                    ],
                                   ),
                                   const SizedBox(height: 12),
                                   if (_isLoadingFeed)
@@ -636,7 +600,7 @@ class _MyHomePageState extends State<MyHomePage> {
                           Padding(
                             padding: const EdgeInsets.all(20),
                             child: RefreshIndicator(
-                              onRefresh: _fetchFeed,
+                              onRefresh: _refreshFeedView,
                               child: ListView(
                                 children: [
                                   Card(

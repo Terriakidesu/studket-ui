@@ -17,7 +17,7 @@ String resolveApiBaseUrl({String apiPath = 'api/v1'}) {
     return debugOverride;
   }
 
-  final String host = Platform.isAndroid ? '10.0.2.2' : 'localhost';
+  final String host = '192.168.1.12';
   return 'http://$host:$port/$apiPath';
 }
 

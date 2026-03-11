@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'app_entry_page.dart';
 import 'api/api_auth_session.dart';
+import 'api/api_base_url.dart';
 import 'api/profile_picture_api.dart';
+import 'api/api_routes.dart';
 import 'api/api_session_storage.dart';
 import 'api/auth_api.dart';
 import 'api/user_realtime_service.dart';
@@ -27,6 +32,18 @@ class _UserProfilePageState extends State<UserProfilePage> {
   bool _isSubmittingTrustedSellerRequest = false;
   bool _isUploadingProfilePicture = false;
   bool _isLoggingOut = false;
+  bool _isLoadingMyPosts = false;
+  String? _myPostsError;
+  List<_ProfileListing> _activeListings = const <_ProfileListing>[];
+  List<_ProfileListing> _lookingForPosts = const <_ProfileListing>[];
+
+  @override
+  void initState() {
+    super.initState();
+    if (ApiAuthSession.isSeller) {
+      unawaited(_loadMyPosts());
+    }
+  }
 
   void _showMessage(String message) {
     if (!mounted) {
@@ -60,6 +77,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
         setState(() {
           _isSubmittingTrustedSellerRequest = false;
         });
+        await _loadMyPosts();
       }
     }
   }
@@ -72,6 +90,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
     try {
       await AuthApi.elevateToSeller();
       _showMessage('Your account is now a seller account.');
+      await _loadMyPosts();
     } on TimeoutException {
       _showMessage('Request timed out. Please try again.');
     } on SocketException {
@@ -226,6 +245,175 @@ class _UserProfilePageState extends State<UserProfilePage> {
         });
       }
     }
+  }
+
+  Future<void> _loadMyPosts() async {
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null || !ApiAuthSession.isSeller) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingMyPosts = true;
+      _myPostsError = null;
+    });
+
+    try {
+      final Map<String, String> headers = <String, String>{
+        'Accept': 'application/json',
+        ...ApiAuthSession.authHeaders(),
+      };
+
+      if (kDebugMode) {
+        debugPrint(
+          'UserProfilePage._loadMyPosts -> GET ${ApiRoutes.listingsForUser(accountId)}',
+        );
+        debugPrint(
+          'UserProfilePage._loadMyPosts -> GET ${ApiRoutes.lookingForListingsForUser(accountId)}',
+        );
+      }
+
+      final Future<http.Response> listingsRequest = http
+          .get(ApiRoutes.listingsForUser(accountId), headers: headers)
+          .timeout(kApiRequestTimeout);
+      final Future<http.Response> lookingForRequest = http
+          .get(ApiRoutes.lookingForListingsForUser(accountId), headers: headers)
+          .timeout(kApiRequestTimeout);
+
+      final List<http.Response> responses = await Future.wait(<Future<http.Response>>[
+        listingsRequest,
+        lookingForRequest,
+      ]);
+
+      final http.Response listingsResponse = responses[0];
+      final http.Response lookingForResponse = responses[1];
+
+      if (listingsResponse.statusCode < 200 || listingsResponse.statusCode >= 300) {
+        throw HttpException(_extractPostsError(listingsResponse));
+      }
+      if (lookingForResponse.statusCode < 200 || lookingForResponse.statusCode >= 300) {
+        throw HttpException(_extractPostsError(lookingForResponse));
+      }
+
+      if (kDebugMode) {
+        debugPrint(
+          'UserProfilePage._loadMyPosts <- listings HTTP ${listingsResponse.statusCode}',
+        );
+        debugPrint(
+          'UserProfilePage._loadMyPosts <- looking-for HTTP ${lookingForResponse.statusCode}',
+        );
+      }
+
+      final List<_ProfileListing> listings = _parseProfileListingsResponse(
+        listingsResponse.body,
+        accountId,
+        label: 'listings',
+      ).where(
+        (_ProfileListing item) => _isActiveStatus(item.status),
+      ).toList(growable: false);
+
+      final List<_ProfileListing> lookingFor = _parseProfileListingsResponse(
+        lookingForResponse.body,
+        accountId,
+        label: 'looking-for',
+      ).where(
+        (_ProfileListing item) => _isActiveStatus(item.status),
+      ).toList(growable: false);
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _activeListings = listings;
+        _lookingForPosts = lookingFor;
+      });
+    } on TimeoutException {
+      _setMyPostsError('Posts request timed out.');
+    } on SocketException {
+      _setMyPostsError('Could not connect to the listings API.');
+    } on HttpException catch (error) {
+      _setMyPostsError(error.message);
+    } on FormatException {
+      _setMyPostsError('Posts response format was invalid.');
+    } catch (_) {
+      _setMyPostsError('Failed to load your posts.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMyPosts = false;
+        });
+      }
+    }
+  }
+
+  void _setMyPostsError(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _myPostsError = message;
+    });
+  }
+
+  String _extractPostsError(http.Response response) {
+    try {
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final dynamic detail = decoded['detail'] ?? decoded['message'];
+        if (detail is String && detail.trim().isNotEmpty) {
+          return detail.trim();
+        }
+      }
+    } catch (_) {}
+    return 'Posts request failed (HTTP ${response.statusCode}).';
+  }
+
+  List<_ProfileListing> _parseProfileListingsResponse(
+    String body,
+    int accountId,
+    {required String label}
+  ) {
+    final dynamic decoded = jsonDecode(body);
+    final List<dynamic> items = decoded is List
+        ? decoded
+        : decoded is Map<String, dynamic>
+        ? (decoded['items'] as List<dynamic>? ??
+              decoded['results'] as List<dynamic>? ??
+              decoded['data'] as List<dynamic>? ??
+              const <dynamic>[])
+        : const <dynamic>[];
+
+    if (kDebugMode) {
+      debugPrint(
+        'UserProfilePage._parseProfileListingsResponse[$label] parsed ${items.length} raw item(s)',
+      );
+    }
+
+    final List<_ProfileListing> parsed = items
+        .whereType<Map<String, dynamic>>()
+        .map(_ProfileListing.fromJson)
+        .where((item) => item.ownerId == null || item.ownerId == accountId)
+        .toList(growable: false);
+
+    if (kDebugMode) {
+      debugPrint(
+        'UserProfilePage._parseProfileListingsResponse[$label] kept ${parsed.length} item(s)',
+      );
+    }
+
+    return parsed;
+  }
+
+  bool _isActiveStatus(String status) {
+    const Set<String> inactive = <String>{
+      'sold',
+      'archived',
+      'deleted',
+      'inactive',
+      'cancelled',
+      'closed',
+    };
+    return !inactive.contains(status.toLowerCase());
   }
 
   @override
@@ -481,6 +669,88 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ],
                 ),
               ),
+              const SizedBox(height: 16),
+              _DiscordSectionCard(
+                title: 'Your Posts',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Manage what is currently live on your seller account.',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: const Color(0xFF6B7280),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Refresh posts',
+                          onPressed: _isLoadingMyPosts ? null : _loadMyPosts,
+                          icon: const Icon(Icons.refresh_rounded),
+                        ),
+                      ],
+                    ),
+                    if (_isLoadingMyPosts)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else if (_myPostsError != null)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF2F2),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFFECACA)),
+                        ),
+                        child: Text(
+                          _myPostsError!,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF991B1B),
+                          ),
+                        ),
+                      )
+                    else ...[
+                      _PostsGroup(
+                        title: 'Current Listings',
+                        emptyLabel: 'No active listings yet.',
+                        items: _activeListings,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => _PostsListPage(
+                                title: 'Current Listings',
+                                emptyLabel: 'No active listings yet.',
+                                items: _activeListings,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      _PostsGroup(
+                        title: 'Looking For Posts',
+                        emptyLabel: 'No active looking for posts yet.',
+                        items: _lookingForPosts,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => _PostsListPage(
+                                title: 'Looking For Posts',
+                                emptyLabel: 'No active looking for posts yet.',
+                                items: _lookingForPosts,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ],
             const SizedBox(height: 16),
             _DiscordSectionCard(
@@ -514,6 +784,49 @@ class _UserProfilePageState extends State<UserProfilePage> {
       return value;
     }
     return value[0].toUpperCase() + value.substring(1);
+  }
+}
+
+class _ProfileListing {
+  const _ProfileListing({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.listingType,
+    required this.status,
+    required this.price,
+    required this.ownerId,
+    required this.tags,
+  });
+
+  final int id;
+  final String title;
+  final String description;
+  final String listingType;
+  final String status;
+  final num? price;
+  final int? ownerId;
+  final List<String> tags;
+
+  factory _ProfileListing.fromJson(Map<String, dynamic> json) {
+    return _ProfileListing(
+      id: (json['listing_id'] as num?)?.toInt() ??
+          (json['id'] as num?)?.toInt() ??
+          0,
+      title: (json['title'] ?? 'Untitled Listing').toString(),
+      description: (json['description'] ?? '').toString(),
+      listingType: (json['listing_type'] ?? 'listing').toString(),
+      status: (json['status'] ?? 'unknown').toString(),
+      price: json['price'] as num?,
+      ownerId: (json['owner_id'] as num?)?.toInt() ??
+          (json['seller_id'] as num?)?.toInt() ??
+          (json['account_id'] as num?)?.toInt(),
+      tags: (json['tags'] is List)
+          ? (json['tags'] as List<dynamic>)
+                .map((dynamic value) => value.toString())
+                .toList(growable: false)
+          : const <String>[],
+    );
   }
 }
 
@@ -650,6 +963,243 @@ class _ActionRow extends StatelessWidget {
             Icon(Icons.chevron_right_rounded, color: color),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PostsGroup extends StatelessWidget {
+  const _PostsGroup({
+    required this.title,
+    required this.emptyLabel,
+    required this.items,
+    required this.onTap,
+  });
+
+  final String title;
+  final String emptyLabel;
+  final List<_ProfileListing> items;
+  final VoidCallback onTap;
+
+  static const int _previewCount = 3;
+
+  String _formatPrice(num? price) {
+    if (price == null) {
+      return 'Price unavailable';
+    }
+    return price % 1 == 0 ? 'PHP ${price.toStringAsFixed(0)}' : 'PHP ${price.toStringAsFixed(2)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool hasMoreThanPreview = items.length > _previewCount;
+    final List<_ProfileListing> visibleItems = items
+        .take(_previewCount)
+        .toList(growable: false);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: items.isEmpty ? null : onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF111827),
+                    ),
+                  ),
+                ),
+                if (items.isNotEmpty)
+                  Text(
+                    hasMoreThanPreview
+                        ? 'Recent ${visibleItems.length} of ${items.length}'
+                        : '${items.length} item${items.length == 1 ? '' : 's'}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF6B7280),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                if (items.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Color(0xFF6B7280),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (items.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Text(
+              emptyLabel,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF6B7280),
+              ),
+            ),
+          )
+        else ...[
+          ...visibleItems.map(
+            (_ProfileListing item) => _ProfileListingCard(item: item),
+          ),
+          if (hasMoreThanPreview)
+            TextButton(
+              onPressed: onTap,
+              child: Text('Show all ${items.length}'),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PostsListPage extends StatelessWidget {
+  const _PostsListPage({
+    required this.title,
+    required this.emptyLabel,
+    required this.items,
+  });
+
+  final String title;
+  final String emptyLabel;
+  final List<_ProfileListing> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: const Color(0xFFF2F3F5),
+      appBar: AppBar(title: Text(title)),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (items.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Text(
+                emptyLabel,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: const Color(0xFF6B7280),
+                ),
+              ),
+            )
+          else
+            ...items.map(
+              (_ProfileListing item) => _ProfileListingCard(item: item),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileListingCard extends StatelessWidget {
+  const _ProfileListingCard({required this.item});
+
+  final _ProfileListing item;
+
+  String _formatPrice(num? price) {
+    if (price == null) {
+      return 'Price unavailable';
+    }
+    return price % 1 == 0
+        ? 'PHP ${price.toStringAsFixed(0)}'
+        : 'PHP ${price.toStringAsFixed(2)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  item.title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _DiscordTag(
+                label: item.status,
+                backgroundColor: const Color(0xFFE5E7EB),
+                foregroundColor: const Color(0xFF374151),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _formatPrice(item.price),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFF2563EB),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (item.description.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              item.description,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF4B5563),
+              ),
+            ),
+          ],
+          if (item.tags.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: item.tags
+                  .map(
+                    (String tag) => _DiscordTag(
+                      label: tag,
+                      backgroundColor: const Color(0xFFE8EAFF),
+                      foregroundColor: const Color(0xFF4752C4),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ],
+        ],
       ),
     );
   }

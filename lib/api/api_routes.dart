@@ -31,8 +31,25 @@ class ApiRoutes {
     return _build(path: 'listings/');
   }
 
+  static Uri listingsForUser(int accountId) {
+    return _build(path: 'listings/users/$accountId');
+  }
+
+  static Uri lookingForListingsForUser(int accountId) {
+    return _build(path: 'listings/users/$accountId/looking-for');
+  }
+
   static Uri listingMediaUpload() {
     return _build(path: 'listing-media/upload');
+  }
+
+  static Uri popularTags({int limit = 20}) {
+    return _build(
+      path: 'tags/popular',
+      queryParameters: <String, dynamic>{
+        'limit': '$limit',
+      },
+    );
   }
 
   static Uri listingsFeed({
