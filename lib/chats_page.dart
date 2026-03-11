@@ -253,7 +253,7 @@ class _ChatsPageState extends State<ChatsPage> {
       conversation.conversationId,
     );
     if (liveMessages.isNotEmpty) {
-      return liveMessages.last.messageText.trim();
+      return _previewTextForMessage(liveMessages.last.messageText);
     }
 
     final String? apiPreview =
@@ -261,7 +261,7 @@ class _ChatsPageState extends State<ChatsPage> {
             ?.messageText
             .trim();
     if (apiPreview != null && apiPreview.isNotEmpty) {
-      return apiPreview;
+      return _previewTextForMessage(apiPreview);
     }
 
     final String? preview = conversation.lastMessageText?.trim();
@@ -270,6 +270,15 @@ class _ChatsPageState extends State<ChatsPage> {
     }
 
     return _formatConversationType(conversation.conversationType);
+  }
+
+  String _previewTextForMessage(String messageText) {
+    final InquiryProductData? inquiryProduct =
+        _ChatThreadPageState._parseInquiryMessage(messageText);
+    if (inquiryProduct != null) {
+      return 'Inquiry: ${inquiryProduct.name}';
+    }
+    return messageText.trim();
   }
 
   String _formatConversationType(String conversationType) {
@@ -300,7 +309,10 @@ class ChatThreadPage extends StatefulWidget {
     required this.sellerName,
     required this.lastMessage,
     required this.sellerAvatarUrl,
+    this.sellerAccountId,
+    this.inquiryProducts = const <InquiryProductData>[],
     this.inquiryProduct,
+    this.initialMessageText,
     this.conversationId,
     this.conversationType,
     this.lastMessageAt,
@@ -310,17 +322,33 @@ class ChatThreadPage extends StatefulWidget {
   final String sellerName;
   final String lastMessage;
   final String sellerAvatarUrl;
+  final int? sellerAccountId;
+  final List<InquiryProductData> inquiryProducts;
   final InquiryProductData? inquiryProduct;
+  final String? initialMessageText;
   final int? conversationId;
   final String? conversationType;
   final DateTime? lastMessageAt;
   final bool isStaffParticipant;
+
+  List<InquiryProductData> get effectiveInquiryProducts {
+    if (inquiryProducts.isNotEmpty) {
+      return inquiryProducts;
+    }
+    if (inquiryProduct != null) {
+      return <InquiryProductData>[inquiryProduct!];
+    }
+    return const <InquiryProductData>[];
+  }
 
   @override
   State<ChatThreadPage> createState() => _ChatThreadPageState();
 }
 
 class _ChatThreadPageState extends State<ChatThreadPage> {
+  static const String _inquiryMessagePrefix = '[studket_inquiry]';
+  static const String _offerAcceptedMessagePrefix = '[studket_offer_accepted]';
+
   final UserRealtimeService _realtime = UserRealtimeService.instance;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -328,20 +356,32 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   bool _isSendingTyping = false;
 
   bool _isLoadingHistory = false;
+  bool _isStartingConversation = false;
   String? _historyError;
   List<_ApiMessage> _historyMessages = const <_ApiMessage>[];
   int _lastRenderedMessageCount = 0;
+  int? _activeConversationId;
+  bool _hasSentInitialInquiry = false;
 
   @override
   void initState() {
     super.initState();
     _messageController.addListener(_handleComposerChanged);
     unawaited(_realtime.ensureConnected());
-    if (widget.conversationId != null) {
-      _realtime.openConversation(widget.conversationId!);
-      unawaited(_realtime.subscribeConversation(widget.conversationId!));
-      unawaited(_loadHistory(widget.conversationId!));
+    _activeConversationId = widget.conversationId;
+    if (_activeConversationId != null) {
+      _bindConversation(
+        _activeConversationId!,
+        sendInitialInquiry: _shouldSendInitialInquiry,
+      );
+    } else if (widget.sellerAccountId != null) {
+      unawaited(_bootstrapInquiryConversation());
     }
+  }
+
+  bool get _shouldSendInitialInquiry {
+    return widget.effectiveInquiryProducts.isNotEmpty ||
+        (widget.initialMessageText ?? '').trim().isNotEmpty;
   }
 
   @override
@@ -349,8 +389,8 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     _typingDebounce?.cancel();
     unawaited(_stopTyping());
     _messageController.removeListener(_handleComposerChanged);
-    if (widget.conversationId != null) {
-      _realtime.closeConversation(widget.conversationId!);
+    if (_activeConversationId != null) {
+      _realtime.closeConversation(_activeConversationId!);
     }
     _messageController.dispose();
     _scrollController.dispose();
@@ -439,6 +479,203 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     }
   }
 
+  void _bindConversation(int conversationId, {bool sendInitialInquiry = false}) {
+    _activeConversationId = conversationId;
+    _realtime.openConversation(conversationId);
+    unawaited(_realtime.subscribeConversation(conversationId));
+    unawaited(_loadHistory(conversationId));
+    if (sendInitialInquiry) {
+      unawaited(_sendInitialInquiryIfNeeded());
+    }
+  }
+
+  Future<void> _bootstrapInquiryConversation() async {
+    final int? sellerAccountId = widget.sellerAccountId;
+    if (sellerAccountId == null) {
+      return;
+    }
+
+    setState(() {
+      _isStartingConversation = true;
+      _historyError = null;
+    });
+
+    try {
+      await _realtime.ensureConnected();
+      final UserRealtimeConversation? existing = _findExistingConversation(
+        sellerAccountId,
+      );
+      if (existing != null) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isStartingConversation = false;
+        });
+        _bindConversation(
+          existing.conversationId,
+          sendInitialInquiry: _shouldSendInitialInquiry,
+        );
+        return;
+      }
+
+      final int conversationId = await _createConversation(
+        sellerAccountId: sellerAccountId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isStartingConversation = false;
+      });
+      _bindConversation(conversationId, sendInitialInquiry: true);
+    } on TimeoutException {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isStartingConversation = false;
+        _historyError = 'The inquiry request timed out.';
+      });
+    } on SocketException {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isStartingConversation = false;
+        _historyError = 'Could not connect to start the inquiry.';
+      });
+    } on HttpException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isStartingConversation = false;
+        _historyError = error.message;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isStartingConversation = false;
+        _historyError = 'Could not start the inquiry.';
+      });
+    }
+  }
+
+  UserRealtimeConversation? _findExistingConversation(int sellerAccountId) {
+    for (final UserRealtimeConversation conversation in _realtime.conversations) {
+      if (conversation.otherAccountId == sellerAccountId) {
+        return conversation;
+      }
+    }
+    return null;
+  }
+
+  Future<int> _createConversation({required int sellerAccountId}) async {
+    final int? currentAccountId = ApiAuthSession.accountId;
+    if (currentAccountId == null || currentAccountId <= 0) {
+      throw const HttpException('No authenticated account id was found.');
+    }
+
+    final List<Map<String, dynamic>> payloads = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'participant1_id': currentAccountId,
+        'participant2_id': sellerAccountId,
+        'conversation_type': 'direct',
+      },
+      <String, dynamic>{
+        'participant1_id': currentAccountId,
+        'participant2_id': sellerAccountId,
+      },
+      <String, dynamic>{
+        'participant1_id': sellerAccountId,
+        'participant2_id': currentAccountId,
+        'conversation_type': 'direct',
+      },
+      <String, dynamic>{
+        'participant1_id': sellerAccountId,
+        'participant2_id': currentAccountId,
+      },
+    ];
+
+    HttpException? lastHttpError;
+    FormatException? lastFormatError;
+
+    for (final Map<String, dynamic> payload in payloads) {
+      final http.Response response = await http
+          .post(
+            ApiRoutes.conversations(),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        lastHttpError = HttpException(_extractErrorMessage(response));
+        continue;
+      }
+
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final int? conversationId =
+            (decoded['conversation_id'] as num?)?.toInt() ??
+                (decoded['id'] as num?)?.toInt();
+        if (conversationId != null && conversationId > 0) {
+          return conversationId;
+        }
+      }
+      lastFormatError =
+          const FormatException('Conversation response was invalid.');
+    }
+
+    if (lastHttpError != null) {
+      throw lastHttpError;
+    }
+    throw lastFormatError ??
+        const FormatException('Conversation response was invalid.');
+  }
+
+  Future<void> _sendInitialInquiryIfNeeded() async {
+    final int? conversationId = _activeConversationId;
+    final String text = (widget.initialMessageText ?? '').trim();
+    if (_hasSentInitialInquiry || conversationId == null) {
+      return;
+    }
+
+    _hasSentInitialInquiry = true;
+    for (final InquiryProductData product in widget.effectiveInquiryProducts) {
+      await _realtime.sendMessage(
+        conversationId: conversationId,
+        messageText: _serializeInquiryMessage(product),
+      );
+    }
+    if (widget.effectiveInquiryProducts.isEmpty && text.isNotEmpty) {
+      await _realtime.sendMessage(
+        conversationId: conversationId,
+        messageText: text,
+      );
+    }
+  }
+
+  Future<void> _acceptInquiryOffer(InquiryProductData product) async {
+    final int? conversationId = _activeConversationId;
+    if (conversationId == null) {
+      return;
+    }
+
+    await _realtime.sendMessage(
+      conversationId: conversationId,
+      messageText: _serializeAcceptedOfferMessage(product),
+    );
+    _scheduleScrollToBottom();
+  }
+
   String _extractErrorMessage(http.Response response) {
     try {
       final dynamic decoded = jsonDecode(response.body);
@@ -459,7 +696,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   }
 
   Future<void> _sendMessage() async {
-    final int? conversationId = widget.conversationId;
+    final int? conversationId = _activeConversationId;
     final String text = _messageController.text.trim();
     if (conversationId == null || text.isEmpty) {
       return;
@@ -475,7 +712,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   }
 
   void _handleComposerChanged() {
-    final int? conversationId = widget.conversationId;
+    final int? conversationId = _activeConversationId;
     if (conversationId == null) {
       return;
     }
@@ -504,7 +741,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   }
 
   Future<void> _stopTyping() async {
-    final int? conversationId = widget.conversationId;
+    final int? conversationId = _activeConversationId;
     if (!_isSendingTyping || conversationId == null) {
       return;
     }
@@ -573,7 +810,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
 
   @override
   Widget build(BuildContext context) {
-    final int? conversationId = widget.conversationId;
+    final int? conversationId = _activeConversationId;
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -600,13 +837,30 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
       body: AnimatedBuilder(
         animation: _realtime,
         builder: (BuildContext context, _) {
+          if (_isStartingConversation) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
           if (conversationId == null) {
-            return const Center(
+            return Center(
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  'Starting a brand new conversation is not documented as a public user endpoint yet. Existing websocket conversations are available from the Chats screen.',
-                  textAlign: TextAlign.center,
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _historyError ??
+                          'The seller details needed for this inquiry are unavailable.',
+                      textAlign: TextAlign.center,
+                    ),
+                    if (widget.sellerAccountId != null) ...[
+                      const SizedBox(height: 12),
+                      FilledButton.tonal(
+                        onPressed: _bootstrapInquiryConversation,
+                        child: const Text('Try again'),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             );
@@ -700,26 +954,42 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                                         ],
                                       ),
                                     ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                       color: message.isMine
-                                           ? Theme.of(context).colorScheme.primary
-                                           : colorScheme.surfaceContainerHighest,
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      message.text,
-                                      style: TextStyle(
+                                  if (message.acceptedOfferProduct != null)
+                                    _OfferAcceptedEmbed(
+                                      product: message.acceptedOfferProduct!,
+                                      isMine: message.isMine,
+                                    )
+                                  else if (message.inquiryProduct != null)
+                                    _InquiryMessageEmbed(
+                                      product: message.inquiryProduct!,
+                                      isMine: message.isMine,
+                                      showAcceptAction:
+                                          !message.isMine && ApiAuthSession.isSeller,
+                                      onAccept: () => _acceptInquiryOffer(
+                                        message.inquiryProduct!,
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 10,
+                                      ),
+                                      decoration: BoxDecoration(
                                         color: message.isMine
-                                            ? colorScheme.onPrimary
-                                            : colorScheme.onSurface,
+                                            ? Theme.of(context).colorScheme.primary
+                                            : colorScheme.surfaceContainerHighest,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        message.text,
+                                        style: TextStyle(
+                                          color: message.isMine
+                                              ? colorScheme.onPrimary
+                                              : colorScheme.onSurface,
+                                        ),
                                       ),
                                     ),
-                                  ),
                                   const SizedBox(height: 4),
                                   Text(
                                     _formatMessageMeta(message.sentAt),
@@ -786,7 +1056,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                             textInputAction: TextInputAction.send,
                             onSubmitted: (_) => _sendMessage(),
                             decoration: InputDecoration(
-                              hintText: 'Type a message',
+                              hintText: conversationId == null
+                                  ? 'Starting your inquiry...'
+                                  : 'Type a message',
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(24),
                               ),
@@ -799,7 +1071,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                         ),
                         const SizedBox(width: 8),
                         IconButton.filled(
-                          onPressed: _sendMessage,
+                          onPressed: conversationId == null ? null : _sendMessage,
                           icon: const Icon(Icons.send),
                         ),
                       ],
@@ -820,6 +1092,44 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     final String minute = local.minute.toString().padLeft(2, '0');
     final String period = local.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $period';
+  }
+
+  String _serializeInquiryMessage(InquiryProductData product) {
+    return '$_inquiryMessagePrefix${jsonEncode(product.toJson())}';
+  }
+
+  String _serializeAcceptedOfferMessage(InquiryProductData product) {
+    return '$_offerAcceptedMessagePrefix${jsonEncode(product.toJson())}';
+  }
+
+  static InquiryProductData? _parseInquiryMessage(String messageText) {
+    final String trimmed = messageText.trim();
+    if (!trimmed.startsWith(_inquiryMessagePrefix)) {
+      return null;
+    }
+    final String rawJson = trimmed.substring(_inquiryMessagePrefix.length);
+    try {
+      final dynamic decoded = jsonDecode(rawJson);
+      if (decoded is Map<String, dynamic>) {
+        return InquiryProductData.fromJson(decoded);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static InquiryProductData? _parseAcceptedOfferMessage(String messageText) {
+    final String trimmed = messageText.trim();
+    if (!trimmed.startsWith(_offerAcceptedMessagePrefix)) {
+      return null;
+    }
+    final String rawJson = trimmed.substring(_offerAcceptedMessagePrefix.length);
+    try {
+      final dynamic decoded = jsonDecode(rawJson);
+      if (decoded is Map<String, dynamic>) {
+        return InquiryProductData.fromJson(decoded);
+      }
+    } catch (_) {}
+    return null;
   }
 }
 
@@ -904,14 +1214,208 @@ class _InlineStaffBadge extends StatelessWidget {
 
 class InquiryProductData {
   const InquiryProductData({
+    required this.listingId,
     required this.name,
+    required this.price,
     required this.location,
     required this.imageUrl,
   });
 
+  final int listingId;
   final String name;
+  final String price;
   final String location;
   final String imageUrl;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'listing_id': listingId,
+      'name': name,
+      'price': price,
+      'location': location,
+      'image_url': imageUrl,
+    };
+  }
+
+  factory InquiryProductData.fromJson(Map<String, dynamic> json) {
+    return InquiryProductData(
+      listingId: (json['listing_id'] as num?)?.toInt() ?? 0,
+      name: (json['name'] ?? 'Listing').toString(),
+      price: (json['price'] ?? '').toString(),
+      location: (json['location'] ?? '').toString(),
+      imageUrl: (json['image_url'] ?? '').toString(),
+    );
+  }
+}
+
+class _InquiryMessageEmbed extends StatelessWidget {
+  const _InquiryMessageEmbed({
+    required this.product,
+    required this.isMine,
+    this.showAcceptAction = false,
+    this.onAccept,
+  });
+
+  final InquiryProductData product;
+  final bool isMine;
+  final bool showAcceptAction;
+  final VoidCallback? onAccept;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 280),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: isMine
+            ? colorScheme.primaryContainer
+            : colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isMine ? colorScheme.primary.withValues(alpha: 0.25) : colorScheme.outlineVariant,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: 148,
+            width: double.infinity,
+            child: product.imageUrl.trim().isNotEmpty
+                ? Image.network(product.imageUrl, fit: BoxFit.cover)
+                : Container(
+                    color: colorScheme.surfaceContainer,
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.image_outlined,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Inquiry',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  product.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: colorScheme.onSurface,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  product.price,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: isMine
+                            ? colorScheme.primary
+                            : colorScheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  product.location,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                ),
+                if (showAcceptAction) ...[
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.tonalIcon(
+                      onPressed: onAccept,
+                      icon: const Icon(Icons.check_circle_outline, size: 18),
+                      label: const Text('Accept current offer'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfferAcceptedEmbed extends StatelessWidget {
+  const _OfferAcceptedEmbed({
+    required this.product,
+    required this.isMine,
+  });
+
+  final InquiryProductData product;
+  final bool isMine;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 280),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isMine
+            ? colorScheme.tertiaryContainer
+            : colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.check_circle,
+                size: 18,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Offer accepted',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            product.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            product.price,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ApiMessage {
@@ -950,6 +1454,8 @@ class _TimelineMessage {
   const _TimelineMessage({
     required this.messageId,
     required this.text,
+    required this.inquiryProduct,
+    required this.acceptedOfferProduct,
     required this.isMine,
     required this.isRealtime,
     required this.senderName,
@@ -959,6 +1465,8 @@ class _TimelineMessage {
 
   final int messageId;
   final String text;
+  final InquiryProductData? inquiryProduct;
+  final InquiryProductData? acceptedOfferProduct;
   final bool isMine;
   final bool isRealtime;
   final String senderName;
@@ -971,9 +1479,17 @@ class _TimelineMessage {
   }) {
     final bool isMine =
         message.senderId != null && message.senderId == ApiAuthSession.accountId;
+    final InquiryProductData? inquiryProduct =
+        _ChatThreadPageState._parseInquiryMessage(message.messageText);
+    final InquiryProductData? acceptedOfferProduct =
+        _ChatThreadPageState._parseAcceptedOfferMessage(message.messageText);
     return _TimelineMessage(
       messageId: message.messageId,
-      text: message.messageText,
+      text: inquiryProduct == null && acceptedOfferProduct == null
+          ? message.messageText
+          : '',
+      inquiryProduct: inquiryProduct,
+      acceptedOfferProduct: acceptedOfferProduct,
       isMine: isMine,
       isRealtime: false,
       senderName: isMine ? 'You' : otherParticipantName,
@@ -983,9 +1499,17 @@ class _TimelineMessage {
   }
 
   factory _TimelineMessage.realtime(UserRealtimeMessage message) {
+    final InquiryProductData? inquiryProduct =
+        _ChatThreadPageState._parseInquiryMessage(message.messageText);
+    final InquiryProductData? acceptedOfferProduct =
+        _ChatThreadPageState._parseAcceptedOfferMessage(message.messageText);
     return _TimelineMessage(
       messageId: message.messageId,
-      text: message.messageText,
+      text: inquiryProduct == null && acceptedOfferProduct == null
+          ? message.messageText
+          : '',
+      inquiryProduct: inquiryProduct,
+      acceptedOfferProduct: acceptedOfferProduct,
       isMine: message.isMine,
       isRealtime: true,
       senderName: message.senderUsername,

@@ -22,6 +22,7 @@ class SellerProfilePage extends StatefulWidget {
 class _SellerProfilePageState extends State<SellerProfilePage> {
   @override
   Widget build(BuildContext context) {
+    final bool hasSellerAvatar = widget.sellerAvatarUrl.trim().isNotEmpty;
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -34,7 +35,12 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
                 children: [
                   CircleAvatar(
                     radius: 32,
-                    backgroundImage: NetworkImage(widget.sellerAvatarUrl),
+                    backgroundImage: hasSellerAvatar
+                        ? NetworkImage(widget.sellerAvatarUrl)
+                        : null,
+                    child: hasSellerAvatar
+                        ? null
+                        : const Icon(Icons.storefront_outlined),
                   ),
                   const SizedBox(width: 14),
                   Expanded(

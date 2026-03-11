@@ -8,22 +8,26 @@ import 'components/studket_app_bar.dart';
 class ProductDetailsPage extends StatefulWidget {
   const ProductDetailsPage({
     super.key,
+    required this.listingId,
     required this.productName,
     required this.productPrice,
     required this.productLocation,
     required this.productDescription,
     required this.imageUrls,
     required this.sellerName,
+    required this.sellerAccountId,
     required this.sellerAvatarUrl,
     required this.sellerRating,
   });
 
+  final int listingId;
   final String productName;
   final String productPrice;
   final String productLocation;
   final String productDescription;
   final List<String> imageUrls;
   final String sellerName;
+  final int? sellerAccountId;
   final String sellerAvatarUrl;
   final double sellerRating;
 
@@ -33,6 +37,10 @@ class ProductDetailsPage extends StatefulWidget {
 
 class _ProductDetailsPageState extends State<ProductDetailsPage> {
   int _currentImageIndex = 0;
+
+  bool get _hasImages => widget.imageUrls.isNotEmpty;
+
+  bool get _hasSellerAvatar => widget.sellerAvatarUrl.trim().isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -64,17 +72,34 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
               ),
             ),
             onPressed: () {
+              if (widget.sellerAccountId == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'This listing is missing the seller details needed for chat.',
+                    ),
+                  ),
+                );
+                return;
+              }
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => ChatThreadPage(
                     sellerName: widget.sellerName,
                     lastMessage: 'Hi, is this still available?',
+                    initialMessageText:
+                        'Hi, is this still available for ${widget.productName}?',
+                    sellerAccountId: widget.sellerAccountId,
                     sellerAvatarUrl: widget.sellerAvatarUrl,
-                    inquiryProduct: InquiryProductData(
-                      name: widget.productName,
-                      location: widget.productLocation,
-                      imageUrl: widget.imageUrls.first,
-                    ),
+                    inquiryProducts: <InquiryProductData>[
+                      InquiryProductData(
+                        listingId: widget.listingId,
+                        name: widget.productName,
+                        price: widget.productPrice,
+                        location: widget.productLocation,
+                        imageUrl: _hasImages ? widget.imageUrls.first : '',
+                      ),
+                    ],
                   ),
                 ),
               );
@@ -96,41 +121,52 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
           children: [
             AspectRatio(
               aspectRatio: 1,
-              child: PageView.builder(
-                itemCount: widget.imageUrls.length,
-                onPageChanged: (index) {
-                  setState(() {
-                    _currentImageIndex = index;
-                  });
-                },
-                itemBuilder: (context, index) {
-                  return NetworkCachedImage(
-                    imageUrl: widget.imageUrls[index],
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                  );
-                },
-              ),
+              child: _hasImages
+                  ? PageView.builder(
+                      itemCount: widget.imageUrls.length,
+                      onPageChanged: (index) {
+                        setState(() {
+                          _currentImageIndex = index;
+                        });
+                      },
+                      itemBuilder: (context, index) {
+                        return NetworkCachedImage(
+                          imageUrl: widget.imageUrls[index],
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                        );
+                      },
+                    )
+                  : Container(
+                      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.image_outlined,
+                        size: 56,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
             ),
             const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(widget.imageUrls.length, (index) {
-                final bool isActive = index == _currentImageIndex;
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  width: isActive ? 18 : 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: isActive
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.grey[300],
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                );
-              }),
-            ),
+            if (_hasImages)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(widget.imageUrls.length, (index) {
+                  final bool isActive = index == _currentImageIndex;
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    width: isActive ? 18 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.grey[300],
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  );
+                }),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Column(
@@ -208,9 +244,12 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
                           children: [
                             CircleAvatar(
                               radius: 24,
-                              backgroundImage: NetworkImage(
-                                widget.sellerAvatarUrl,
-                              ),
+                              backgroundImage: _hasSellerAvatar
+                                  ? NetworkImage(widget.sellerAvatarUrl)
+                                  : null,
+                              child: _hasSellerAvatar
+                                  ? null
+                                  : const Icon(Icons.storefront_outlined),
                             ),
                             const SizedBox(width: 12),
                             Expanded(

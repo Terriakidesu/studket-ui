@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../api/profile_picture_api.dart';
 
@@ -32,7 +33,7 @@ class AccountAvatar extends StatelessWidget {
           radius: radius,
           backgroundColor: backgroundColor,
           backgroundImage: imageUrl != null && !isSvg
-              ? NetworkImage(imageUrl)
+              ? CachedNetworkImageProvider(imageUrl)
               : null,
           child: imageUrl == null
               ? Text(fallbackLabel)

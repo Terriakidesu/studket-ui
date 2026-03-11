@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'api/api_session_storage.dart';
 import 'authentication_page.dart';
-import 'main.dart' show MyHomePage;
+import 'home_page.dart';
 
 class AppEntryPage extends StatefulWidget {
   const AppEntryPage({super.key});
