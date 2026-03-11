@@ -26,6 +26,8 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _priceController = TextEditingController();
+  final TextEditingController _budgetMinController = TextEditingController();
+  final TextEditingController _budgetMaxController = TextEditingController();
   final TextEditingController _customTagController = TextEditingController();
   final List<File> _mediaFiles = <File>[];
 
@@ -58,6 +60,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
   String _selectedListingType = _saleListingTypes.first;
   final Set<String> _selectedTags = <String>{};
   List<String> _availableTags = _fallbackTags;
+  bool _useBudgetRange = false;
   bool _isSubmitting = false;
   String? _submitError;
 
@@ -74,6 +77,8 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     _titleController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
+    _budgetMinController.dispose();
+    _budgetMaxController.dispose();
     _customTagController.dispose();
     super.dispose();
   }
@@ -90,12 +95,33 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     });
 
     try {
-      final num? price = _parseOptionalNum(_priceController.text);
+      final num? amount = _parseOptionalNum(_priceController.text);
+      final num? budgetMin = _useBudgetRange
+          ? _parseOptionalNum(_budgetMinController.text)
+          : amount;
+      final num? budgetMax = _useBudgetRange
+          ? _parseOptionalNum(_budgetMaxController.text)
+          : null;
+      if (_isLookingForMode &&
+          budgetMin != null &&
+          budgetMax != null &&
+          budgetMin >= budgetMax) {
+        throw const FormatException(
+          'Budget maximum must be greater than budget minimum.',
+        );
+      }
+      if (_isLookingForMode &&
+          ((budgetMin != null && budgetMin < 0) ||
+              (budgetMax != null && budgetMax < 0))) {
+        throw const FormatException('Budget values cannot be negative.');
+      }
       final Map<String, dynamic> createdListing = await ListingsApi.createListing(
         title: _titleController.text,
         description: _descriptionController.text,
         listingType: _isLookingForMode ? 'looking_for' : _selectedListingType,
-        price: price,
+        price: _isLookingForMode ? null : amount,
+        budgetMin: _isLookingForMode ? budgetMin : null,
+        budgetMax: _isLookingForMode ? budgetMax : null,
         condition: _isLookingForMode ? null : _selectedCondition,
         tags: _selectedTags.toList(growable: false),
       );
@@ -124,7 +150,11 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     } on HttpException catch (error) {
       _setSubmitError(error.message);
     } on FormatException {
-      _setSubmitError('One or more numeric fields are invalid.');
+      _setSubmitError(
+        _isLookingForMode
+            ? 'Budget values are invalid. Max must be greater than min, and negatives are not allowed.'
+            : 'One or more numeric fields are invalid.',
+      );
     } catch (_) {
       _setSubmitError('Failed to create post.');
     } finally {
@@ -446,43 +476,190 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
               _SectionCard(
                 title: isLookingFor ? 'Budget' : 'Pricing',
                 subtitle: isLookingFor
-                    ? 'Use one number here and explain the full range in the description.'
+                    ? 'Set the budget range you are willing to pay.'
                     : 'Keep the price direct and easy to compare.',
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _priceController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: _fieldDecoration(
-                          isLookingFor ? 'Budget Reference' : 'Price',
-                          prefixText: 'PHP ',
-                        ),
-                        validator: (String? value) {
-                          final String normalized = (value ?? '').trim();
-                          if (!isLookingFor && normalized.isEmpty) {
-                            return 'Price is required.';
-                          }
-                          if (normalized.isNotEmpty &&
-                              num.tryParse(normalized) == null) {
-                            return 'Enter a valid amount.';
-                          }
-                          return null;
-                        },
+                child: isLookingFor
+                    ? Column(
+                        children: [
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Use budget range'),
+                            subtitle: Text(
+                              _useBudgetRange
+                                  ? 'Set a minimum and maximum budget.'
+                                  : 'Use a single starting budget amount.',
+                            ),
+                            value: _useBudgetRange,
+                            onChanged: (bool value) {
+                              setState(() {
+                                _useBudgetRange = value;
+                                if (!value) {
+                                  _budgetMaxController.clear();
+                                }
+                              });
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          if (_useBudgetRange)
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _budgetMinController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: _fieldDecoration(
+                                    'Budget Min',
+                                    prefixText: 'PHP ',
+                                  ),
+                                  validator: (String? value) {
+                                    final String normalized =
+                                        (value ?? '').trim();
+                                    final num? parsed = normalized.isEmpty
+                                        ? null
+                                        : num.tryParse(normalized);
+                                    if (normalized.isNotEmpty &&
+                                        parsed == null) {
+                                      return 'Enter a valid amount.';
+                                    }
+                                    if (parsed != null && parsed < 0) {
+                                      return 'Min cannot be negative.';
+                                    }
+                                    final num? maxValue = _parseOptionalNum(
+                                      _budgetMaxController.text,
+                                    );
+                                    if (parsed != null &&
+                                        maxValue != null &&
+                                        parsed >= maxValue) {
+                                      return 'Min must be less than max.';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _budgetMaxController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: _fieldDecoration(
+                                    'Budget Max',
+                                    prefixText: 'PHP ',
+                                  ),
+                                  validator: (String? value) {
+                                    final String normalized =
+                                        (value ?? '').trim();
+                                    final num? parsed = normalized.isEmpty
+                                        ? null
+                                        : num.tryParse(normalized);
+                                    if (normalized.isNotEmpty &&
+                                        parsed == null) {
+                                      return 'Enter a valid amount.';
+                                    }
+                                    if (parsed != null && parsed < 0) {
+                                      return 'Max cannot be negative.';
+                                    }
+                                    final num? minValue = _parseOptionalNum(
+                                      _budgetMinController.text,
+                                    );
+                                    if (minValue != null &&
+                                        parsed != null &&
+                                        minValue >= parsed) {
+                                      return 'Max must be greater than min.';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (!_useBudgetRange)
+                            TextFormField(
+                              controller: _priceController,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              decoration: _fieldDecoration(
+                                'Budget',
+                                prefixText: 'PHP ',
+                              ),
+                              validator: (String? value) {
+                                final String normalized = (value ?? '').trim();
+                                final num? parsed = normalized.isEmpty
+                                    ? null
+                                    : num.tryParse(normalized);
+                                if (normalized.isNotEmpty && parsed == null) {
+                                  return 'Enter a valid amount.';
+                                }
+                                if (parsed != null && parsed < 0) {
+                                  return 'Budget cannot be negative.';
+                                }
+                                return null;
+                              },
+                            ),
+                        ],
+                      )
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _priceController,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              decoration: _fieldDecoration(
+                                'Price',
+                                prefixText: 'PHP ',
+                              ),
+                              validator: (String? value) {
+                                final String normalized = (value ?? '').trim();
+                                if (normalized.isEmpty) {
+                                  return 'Price is required.';
+                                }
+                                if (num.tryParse(normalized) == null) {
+                                  return 'Enter a valid amount.';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          _InfoPill(
+                            icon: Icons.payments_outlined,
+                            label: 'Visible price',
+                            onTap: () {
+                              showDialog<void>(
+                                context: context,
+                                builder: (BuildContext context) {
+                                  return AlertDialog(
+                                    title: const Text('Visible Price'),
+                                    content: const Text(
+                                      'This is the price buyers will see on the post.',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () {
+                                          Navigator.of(context).pop();
+                                        },
+                                        child: const Text('OK'),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    _InfoPill(
-                      icon: isLookingFor
-                          ? Icons.tune_outlined
-                          : Icons.payments_outlined,
-                      label: isLookingFor ? 'Budget anchor' : 'Visible price',
-                    ),
-                  ],
-                ),
               ),
               if (!isLookingFor) ...[
                 const SizedBox(height: 16),
@@ -663,31 +840,6 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                   ),
                 ),
               ],
-              const SizedBox(height: 16),
-              _SectionCard(
-                title: 'Submission Notes',
-                subtitle: 'The layout is cleaner, but it still respects the current backend contract.',
-                child: Column(
-                  children: [
-                    _NoteBanner(
-                      backgroundColor: const Color(0xFFFFF8E8),
-                      borderColor: const Color(0xFFF5D58A),
-                      textColor: const Color(0xFF7C5A10),
-                      text: isLookingFor
-                          ? 'This route does not expose separate budget_min and budget_max fields. Use the budget field above plus the description for the full range.'
-                          : 'This screen sends the listing fields supported by the current route, including tags selected above.',
-                    ),
-                    const SizedBox(height: 12),
-                    _NoteBanner(
-                      backgroundColor: colorScheme.primaryContainer,
-                      textColor: colorScheme.onPrimaryContainer,
-                      text: isLookingFor
-                          ? 'This post will be submitted as listing_type = looking_for without media.'
-                          : 'This post will be submitted as a seller-owned listing, then media uploads will run as a second step.',
-                    ),
-                  ],
-                ),
-              ),
               if (_submitError != null) ...[
                 const SizedBox(height: 16),
                 Container(
@@ -917,33 +1069,39 @@ class _InfoPill extends StatelessWidget {
   const _InfoPill({
     required this.icon,
     required this.label,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF111827),
+    return Material(
+      color: const Color(0xFF111827),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18, color: Colors.white),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
+        child: Container(
+          height: 56,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: Colors.white),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1004,37 +1162,6 @@ class _SummaryTile extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _NoteBanner extends StatelessWidget {
-  const _NoteBanner({
-    required this.backgroundColor,
-    required this.textColor,
-    required this.text,
-    this.borderColor,
-  });
-
-  final Color backgroundColor;
-  final Color textColor;
-  final String text;
-  final Color? borderColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(16),
-        border: borderColor == null ? null : Border.all(color: borderColor!),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(color: textColor, height: 1.4),
       ),
     );
   }

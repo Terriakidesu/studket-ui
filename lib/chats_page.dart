@@ -9,6 +9,7 @@ import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
 import 'api/api_routes.dart';
 import 'api/user_realtime_service.dart';
+import 'components/account_avatar.dart';
 import 'components/studket_app_bar.dart';
 import 'seller_profile_page.dart';
 
@@ -121,7 +122,8 @@ class _ChatsPageState extends State<ChatsPage> {
             itemBuilder: (BuildContext context, int index) {
               final UserRealtimeConversation conversation =
                   _realtime.conversations[index];
-              final String avatarUrl = _avatarUrlForConversation(conversation);
+              final int avatarAccountId =
+                  conversation.otherAccountId ?? conversation.conversationId;
               final bool hasNewMessage = _realtime.hasNewMessage(
                 conversation.conversationId,
               );
@@ -158,17 +160,16 @@ class _ChatsPageState extends State<ChatsPage> {
                     onTap: () {
                       _openOtherUserProfile(
                         name: conversation.title,
-                        avatarUrl: avatarUrl,
+                        avatarUrl: _avatarUrlForConversation(conversation),
                       );
                     },
-                    child: CircleAvatar(
+                    child: AccountAvatar(
+                      accountId: avatarAccountId,
+                      radius: 20,
                       backgroundColor: hasNewMessage
                           ? Theme.of(context).colorScheme.primary
                           : null,
-                      backgroundImage: NetworkImage(avatarUrl),
-                      child: conversation.title.isEmpty
-                          ? const Text('?')
-                          : null,
+                      label: conversation.title,
                     ),
                   ),
                   title: Text(
@@ -212,7 +213,9 @@ class _ChatsPageState extends State<ChatsPage> {
                         builder: (_) => ChatThreadPage(
                           sellerName: conversation.title,
                           lastMessage: conversation.conversationType,
-                          sellerAvatarUrl: avatarUrl,
+                          sellerAvatarUrl: _avatarUrlForConversation(
+                            conversation,
+                          ),
                           conversationId: conversation.conversationId,
                           conversationType: conversation.conversationType,
                           lastMessageAt: conversation.lastMessageAt,
@@ -237,8 +240,9 @@ class _ChatsPageState extends State<ChatsPage> {
   }
 
   String _avatarUrlForConversation(UserRealtimeConversation conversation) {
-    final int seed = conversation.otherAccountId ?? conversation.conversationId;
-    return 'https://i.pravatar.cc/150?img=${(seed % 70) + 1}';
+    final int accountId =
+        conversation.otherAccountId ?? conversation.conversationId;
+    return '${resolveApiBaseUrl(apiPath: 'api/v1')}/profile-pictures/$accountId';
   }
 
   String _recentMessagePreview(UserRealtimeConversation conversation) {
@@ -512,7 +516,10 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     final Map<String, _TimelineMessage> items = <String, _TimelineMessage>{};
 
     for (final _ApiMessage message in _historyMessages) {
-      items['api:${message.messageId}'] = _TimelineMessage.api(message);
+      items['api:${message.messageId}'] = _TimelineMessage.api(
+        message,
+        otherParticipantName: widget.sellerName,
+      );
     }
     for (final UserRealtimeMessage message
         in _realtime.messagesFor(conversationId)) {
@@ -954,7 +961,10 @@ class _TimelineMessage {
   final DateTime sentAt;
   final int sortOrder;
 
-  factory _TimelineMessage.api(_ApiMessage message) {
+  factory _TimelineMessage.api(
+    _ApiMessage message, {
+    required String otherParticipantName,
+  }) {
     final bool isMine =
         message.senderId != null && message.senderId == ApiAuthSession.accountId;
     return _TimelineMessage(
@@ -962,7 +972,7 @@ class _TimelineMessage {
       text: message.messageText,
       isMine: isMine,
       isRealtime: false,
-      senderName: isMine ? 'You' : 'Account ${message.senderId ?? '-'}',
+      senderName: isMine ? 'You' : otherParticipantName,
       sentAt: message.sentAt,
       sortOrder: message.sourceOrder,
     );

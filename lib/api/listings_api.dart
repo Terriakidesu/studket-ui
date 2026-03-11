@@ -16,6 +16,8 @@ class ListingsApi {
     required String description,
     required String listingType,
     num? price,
+    num? budgetMin,
+    num? budgetMax,
     String? condition,
     List<String> tags = const <String>[],
   }) async {
@@ -34,6 +36,12 @@ class ListingsApi {
     };
     if (price != null) {
       payload['price'] = price;
+    }
+    if (budgetMin != null) {
+      payload['budget_min'] = budgetMin;
+    }
+    if (budgetMax != null) {
+      payload['budget_max'] = budgetMax;
     }
     if ((normalizedCondition ?? '').isNotEmpty) {
       payload['condition'] = normalizedCondition;
