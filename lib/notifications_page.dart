@@ -562,8 +562,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
       grouped.putIfAbsent(key, () => <UserRealtimeNotification>[]).add(item);
     }
 
-    return grouped.entries.map((_entry) {
-      final List<UserRealtimeNotification> items = _entry.value
+    return grouped.entries.map((entry) {
+      final List<UserRealtimeNotification> items = entry.value
         ..sort((UserRealtimeNotification a, UserRealtimeNotification b) {
           final DateTime aTime =
               a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
