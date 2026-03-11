@@ -10,6 +10,8 @@ class FeedListing {
     required this.description,
     required this.imageUrls,
     required this.price,
+    required this.budgetMin,
+    required this.budgetMax,
     required this.campus,
     required this.tags,
     required this.listingType,
@@ -29,6 +31,8 @@ class FeedListing {
   final String description;
   final List<String> imageUrls;
   final num? price;
+  final num? budgetMin;
+  final num? budgetMax;
   final String campus;
   final List<String> tags;
   final String listingType;
@@ -54,6 +58,8 @@ class FeedListing {
       description: (json['description'] ?? '').toString(),
       imageUrls: imageUrls,
       price: json['price'] as num?,
+      budgetMin: json['budget_min'] as num?,
+      budgetMax: json['budget_max'] as num?,
       campus: (json['seller_campus'] ?? 'Campus not provided').toString(),
       tags: (json['tags'] is List)
           ? (json['tags'] as List<dynamic>)

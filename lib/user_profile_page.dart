@@ -195,7 +195,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
             toolbarTitle: 'Crop Profile Picture',
             toolbarColor: const Color(0xFF5865F2),
             toolbarWidgetColor: Colors.white,
-            statusBarColor: const Color(0xFF5865F2),
+            statusBarLight: false,
             activeControlsWidgetColor: const Color(0xFF5865F2),
             initAspectRatio: CropAspectRatioPreset.square,
             lockAspectRatio: true,
@@ -1047,13 +1047,6 @@ class _PostsGroup extends StatelessWidget {
 
   static const int _previewCount = 3;
 
-  String _formatPrice(num? price) {
-    if (price == null) {
-      return 'Price unavailable';
-    }
-    return price % 1 == 0 ? 'PHP ${price.toStringAsFixed(0)}' : 'PHP ${price.toStringAsFixed(2)}';
-  }
-
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -1195,13 +1188,23 @@ class _ProfileListingCard extends StatelessWidget {
   final _ProfileListing item;
   final ValueChanged<_ProfileListing> onEdit;
 
-  String _formatPrice(num? price) {
-    if (price == null) {
-      return 'Price unavailable';
+  String _formatMoney(num? value) {
+    if (value == null) {
+      return 'Budget unavailable';
     }
-    return price % 1 == 0
-        ? 'PHP ${price.toStringAsFixed(0)}'
-        : 'PHP ${price.toStringAsFixed(2)}';
+    return value % 1 == 0
+        ? 'PHP ${value.toStringAsFixed(0)}'
+        : 'PHP ${value.toStringAsFixed(2)}';
+  }
+
+  String _formatListingAmount(_ProfileListing item) {
+    if (item.listingType == 'looking_for') {
+      if (item.budgetMin != null && item.budgetMax != null) {
+        return '${_formatMoney(item.budgetMin)} - ${_formatMoney(item.budgetMax)}';
+      }
+      return _formatMoney(item.budgetMin ?? item.price);
+    }
+    return _formatMoney(item.price).replaceFirst('Budget', 'Price');
   }
 
   @override
@@ -1249,7 +1252,7 @@ class _ProfileListingCard extends StatelessWidget {
                   ),
           const SizedBox(height: 6),
           Text(
-            _formatPrice(item.price),
+            _formatListingAmount(item),
             style: theme.textTheme.bodyMedium?.copyWith(
               color: colorScheme.primary,
               fontWeight: FontWeight.w700,
@@ -1454,29 +1457,35 @@ class AppearanceSettingsPage extends StatelessWidget {
             children: [
               _DiscordSectionCard(
                 title: 'Theme',
-                child: Column(
-                  children: [
-                    _ThemeModeTile(
-                      title: 'Follow Device',
-                      subtitle: 'Use the system light or dark preference.',
-                      value: ThemeMode.system,
-                      groupValue: selectedMode,
-                    ),
-                    const Divider(height: 24),
-                    _ThemeModeTile(
-                      title: 'Light',
-                      subtitle: 'Always use the light theme.',
-                      value: ThemeMode.light,
-                      groupValue: selectedMode,
-                    ),
-                    const Divider(height: 24),
-                    _ThemeModeTile(
-                      title: 'Dark',
-                      subtitle: 'Always use the dark theme.',
-                      value: ThemeMode.dark,
-                      groupValue: selectedMode,
-                    ),
-                  ],
+                child: RadioGroup<ThemeMode?>(
+                  groupValue: selectedMode,
+                  onChanged: (ThemeMode? nextValue) {
+                    if (nextValue == null) {
+                      return;
+                    }
+                    AppThemeController.instance.setThemeMode(nextValue);
+                  },
+                  child: Column(
+                    children: [
+                      _ThemeModeTile(
+                        title: 'Follow Device',
+                        subtitle: 'Use the system light or dark preference.',
+                        value: ThemeMode.system,
+                      ),
+                      const Divider(height: 24),
+                      _ThemeModeTile(
+                        title: 'Light',
+                        subtitle: 'Always use the light theme.',
+                        value: ThemeMode.light,
+                      ),
+                      const Divider(height: 24),
+                      _ThemeModeTile(
+                        title: 'Dark',
+                        subtitle: 'Always use the dark theme.',
+                        value: ThemeMode.dark,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -1492,17 +1501,15 @@ class _ThemeModeTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.value,
-    required this.groupValue,
   });
 
   final String title;
   final String subtitle;
   final ThemeMode value;
-  final ThemeMode groupValue;
 
   @override
   Widget build(BuildContext context) {
-    return RadioListTile<ThemeMode>(
+    return RadioListTile<ThemeMode?>(
       contentPadding: EdgeInsets.zero,
       title: Text(
         title,
@@ -1512,13 +1519,6 @@ class _ThemeModeTile extends StatelessWidget {
       ),
       subtitle: Text(subtitle),
       value: value,
-      groupValue: groupValue,
-      onChanged: (ThemeMode? nextValue) {
-        if (nextValue == null) {
-          return;
-        }
-        AppThemeController.instance.setThemeMode(nextValue);
-      },
     );
   }
 }

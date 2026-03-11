@@ -631,15 +631,13 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
       }
 
       setState(() {
-        _resolvedInquiry = inquiry == null
-            ? null
-            : _ResolvedInquiryPreview(
-                inquiryId: inquiry.inquiryId,
-                product: _enrichInquiryProduct(inquiry.product),
-                buyerAccountId: inquiry.buyerAccountId,
-                isMine: inquiry.isMine,
-                status: inquiry.status,
-              );
+        _resolvedInquiry = _ResolvedInquiryPreview(
+          inquiryId: inquiry.inquiryId,
+          product: _enrichInquiryProduct(inquiry.product),
+          buyerAccountId: inquiry.buyerAccountId,
+          isMine: inquiry.isMine,
+          status: inquiry.status,
+        );
       });
     } catch (_) {}
   }
@@ -2406,6 +2404,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
           conversationId: conversationId,
           messageText: _serializeTransactionCompletedMessage(expectedQr),
         );
+      }
+      if (!mounted) {
+        return;
       }
       Navigator.of(context, rootNavigator: true).pop();
       ScaffoldMessenger.of(context).showSnackBar(

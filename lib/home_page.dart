@@ -214,7 +214,7 @@ class _MyHomePageState extends State<MyHomePage> {
     unawaited(_fetchFeed());
   }
 
-  String _formatPrice(num? value) {
+  String _formatMoney(num? value) {
     if (value == null) {
       return 'Price unavailable';
     }
@@ -222,6 +222,16 @@ class _MyHomePageState extends State<MyHomePage> {
         ? value.toStringAsFixed(0)
         : value.toStringAsFixed(2);
     return 'PHP $amount';
+  }
+
+  String _formatListingAmount(FeedListing item) {
+    if (item.listingType == 'looking_for') {
+      if (item.budgetMin != null && item.budgetMax != null) {
+        return '${_formatMoney(item.budgetMin)} - ${_formatMoney(item.budgetMax)}';
+      }
+      return _formatMoney(item.budgetMin ?? item.price);
+    }
+    return _formatMoney(item.price);
   }
 
   int get _notificationBadgeCount => _realtime.notifications
@@ -652,7 +662,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 shareToken: item.shareToken,
                 shareUrl: item.shareUrl,
                 productName: item.title,
-                productPrice: _formatPrice(item.price),
+                productPrice: _formatListingAmount(item),
                 productLocation: item.campus,
                 productDescription: item.description.isEmpty
                     ? 'No description provided.'
@@ -661,8 +671,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 sellerName: item.sellerUsername,
                 sellerAccountId: item.ownerId,
                 sellerAvatarUrl: item.sellerAvatarUrl ?? '',
-                sellerRating:
-                    (item.sellerAverageRating as num?)?.toDouble() ?? 0,
+                sellerRating: item.sellerAverageRating?.toDouble() ?? 0,
               ),
             ),
           );
@@ -687,7 +696,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _formatPrice(item.price),
+                          _formatListingAmount(item),
                           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                 color: Theme.of(context).colorScheme.primary,
                                 fontWeight: FontWeight.w700,
@@ -772,7 +781,7 @@ class _MyHomePageState extends State<MyHomePage> {
         final FeedListing item = _visibleSaleFeedItems[index];
         return _SaleFeedCard(
           title: item.title,
-          priceLabel: _formatPrice(item.price),
+          priceLabel: _formatListingAmount(item),
           campus: item.campus,
           status: item.status,
           sellerName: item.sellerUsername,
@@ -786,7 +795,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   shareToken: item.shareToken,
                   shareUrl: item.shareUrl,
                   productName: item.title,
-                  productPrice: _formatPrice(item.price),
+                  productPrice: _formatListingAmount(item),
                   productLocation: item.campus,
                   productDescription: item.description.isEmpty
                       ? 'No description provided.'
@@ -795,8 +804,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   sellerName: item.sellerUsername,
                   sellerAccountId: item.ownerId,
                   sellerAvatarUrl: item.sellerAvatarUrl ?? '',
-                  sellerRating:
-                      (item.sellerAverageRating as num?)?.toDouble() ?? 0,
+                  sellerRating: item.sellerAverageRating?.toDouble() ?? 0,
                 ),
               ),
             );
