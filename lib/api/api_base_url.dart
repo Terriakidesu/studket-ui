@@ -4,7 +4,6 @@ const Duration kApiRequestTimeout = Duration(seconds: 10);
 
 String resolveApiBaseUrl({String apiPath = 'api/v1'}) {
 
-  final int port = 8088;
 
   final String debugOverride = const String.fromEnvironment(
     'API_BASE_URL',
@@ -13,10 +12,10 @@ String resolveApiBaseUrl({String apiPath = 'api/v1'}) {
 
   if (kDebugMode && debugOverride.isNotEmpty) {
     return debugOverride;
-  }
+  } 
 
-  final String host = '192.168.1.12';
-  return 'http://$host:$port/$apiPath';
+  final String host = 'unliveable-lucille-threatless.ngrok-free.dev';
+  return 'https://$host/$apiPath';
 }
 
 String resolveWebSocketBaseUrl() {
