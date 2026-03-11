@@ -1,4 +1,10 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
+
+import 'api/api_base_url.dart';
 
 class AppNotifications {
   AppNotifications._();
@@ -85,6 +91,7 @@ class AppNotifications {
     required int conversationId,
     required String senderName,
     required String messageText,
+    int? senderAccountId,
   }) async {
     if (!_isInitialized) {
       return;
@@ -93,6 +100,17 @@ class AppNotifications {
     if (_shouldSkipDuplicate('message:$messageId')) {
       return;
     }
+
+    final ByteArrayAndroidIcon? senderIcon = senderAccountId == null
+        ? null
+        : await _loadProfileIcon(senderAccountId);
+    final Person senderPerson = Person(
+      name: senderName,
+      key: senderAccountId?.toString() ?? senderName,
+      important: true,
+      icon: senderIcon,
+    );
+    const Person me = Person(name: 'You');
 
     await _plugin.show(
       100000 + conversationId,
@@ -105,6 +123,19 @@ class AppNotifications {
           channelDescription: 'Incoming Studket chat messages',
           importance: Importance.high,
           priority: Priority.high,
+          category: AndroidNotificationCategory.message,
+          styleInformation: MessagingStyleInformation(
+            me,
+            conversationTitle: senderName,
+            groupConversation: false,
+            messages: <Message>[
+              Message(
+                messageText,
+                DateTime.now(),
+                senderPerson,
+              ),
+            ],
+          ),
         ),
         iOS: const DarwinNotificationDetails(),
         macOS: const DarwinNotificationDetails(),
@@ -154,5 +185,26 @@ class AppNotifications {
     }
     _recentNotifications[key] = now;
     return false;
+  }
+
+  Future<ByteArrayAndroidIcon?> _loadProfileIcon(int accountId) async {
+    try {
+      final Uri uri = Uri.parse(
+        '${resolveApiBaseUrl(apiPath: 'api/v1')}/profile-pictures/$accountId',
+      );
+      final http.Response response = await http.get(uri).timeout(
+        kApiRequestTimeout,
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+      final Uint8List bytes = response.bodyBytes;
+      if (bytes.isEmpty) {
+        return null;
+      }
+      return ByteArrayAndroidIcon.fromBase64String(base64Encode(bytes));
+    } catch (_) {
+      return null;
+    }
   }
 }

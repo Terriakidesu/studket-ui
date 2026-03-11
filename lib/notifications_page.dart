@@ -117,7 +117,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 return ListTile(
                   tileColor: isUnread ? colorScheme.primaryContainer : null,
                   leading: _NotificationTypeIcon(notification: latest),
-                  onTap: () {
+                  onTap: () async {
+                    await _markNotificationsRead(group.items);
+                    if (!context.mounted) {
+                      return;
+                    }
                     _openMessageGroup(context, latest);
                   },
                   title: Row(
@@ -240,6 +244,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     tileColor:
                         item.isRead ? null : colorScheme.primaryContainer,
                     leading: _NotificationTypeIcon(notification: item),
+                    onTap: () async {
+                      if (!item.isRead) {
+                        await _realtime.markNotificationRead(
+                          item.notificationId,
+                        );
+                      }
+                    },
                     title: Text(
                       item.title,
                       style: TextStyle(
@@ -344,6 +355,16 @@ class _NotificationsPageState extends State<NotificationsPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _markNotificationsRead(
+    List<UserRealtimeNotification> items,
+  ) async {
+    for (final UserRealtimeNotification item in items) {
+      if (!item.isRead) {
+        await _realtime.markNotificationRead(item.notificationId);
+      }
+    }
   }
 
   bool _isStaffAccountType(String value) {

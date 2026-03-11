@@ -410,6 +410,7 @@ class UserRealtimeService extends ChangeNotifier {
               conversationId: message.conversationId,
               senderName: message.senderUsername,
               messageText: message.messageText,
+              senderAccountId: message.senderId,
             );
           }
         }
