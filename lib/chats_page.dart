@@ -95,6 +95,7 @@ class _ChatsPageState extends State<ChatsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: const StudketAppBar(title: 'Chats'),
       body: AnimatedBuilder(
@@ -118,7 +119,7 @@ class _ChatsPageState extends State<ChatsPage> {
           return ListView.separated(
             itemCount: _realtime.conversations.length,
             separatorBuilder: (_, _) =>
-                Divider(height: 1, color: Colors.grey[200]),
+                Divider(height: 1, color: colorScheme.outlineVariant),
             itemBuilder: (BuildContext context, int index) {
               final UserRealtimeConversation conversation =
                   _realtime.conversations[index];
@@ -189,7 +190,9 @@ class _ChatsPageState extends State<ChatsPage> {
                     style: TextStyle(
                       color: isTyping
                           ? Theme.of(context).colorScheme.primary
-                          : (hasNewMessage ? Colors.black87 : Colors.grey[700]),
+                           : (hasNewMessage
+                               ? colorScheme.onSurface
+                               : colorScheme.onSurfaceVariant),
                       fontStyle: isTyping ? FontStyle.italic : FontStyle.normal,
                       fontWeight: hasNewMessage || isTyping
                           ? FontWeight.w600
@@ -571,6 +574,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   @override
   Widget build(BuildContext context) {
     final int? conversationId = widget.conversationId;
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: StudketAppBar(
@@ -685,7 +689,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                                                 .textTheme
                                                 .labelSmall
                                                 ?.copyWith(
-                                                  color: Colors.grey[600],
+                                                   color: colorScheme.onSurfaceVariant,
                                                 ),
                                           ),
                                           if (!message.isMine &&
@@ -702,17 +706,17 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                                       vertical: 10,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: message.isMine
-                                          ? Theme.of(context).colorScheme.primary
-                                          : Colors.grey[200],
+                                       color: message.isMine
+                                           ? Theme.of(context).colorScheme.primary
+                                           : colorScheme.surfaceContainerHighest,
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
                                       message.text,
                                       style: TextStyle(
                                         color: message.isMine
-                                            ? Colors.white
-                                            : Colors.black87,
+                                            ? colorScheme.onPrimary
+                                            : colorScheme.onSurface,
                                       ),
                                     ),
                                   ),
@@ -721,7 +725,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                                     _formatMessageMeta(message.sentAt),
                                     style: TextStyle(
                                       fontSize: 11,
-                                      color: Colors.grey[600],
+                                       color: colorScheme.onSurfaceVariant,
                                     ),
                                   ),
                                 ],
@@ -761,7 +765,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                                     Text(
                                       '${typingState!.username} is typing...',
                                       style: TextStyle(
-                                        color: Colors.grey[700],
+                                         color: colorScheme.onSurfaceVariant,
                                         fontSize: 12,
                                         fontStyle: FontStyle.italic,
                                       ),

@@ -135,16 +135,15 @@ class _RegisterPageState extends State<RegisterPage> {
       labelText: label,
       prefixIcon: prefixIcon == null ? null : Icon(prefixIcon),
       suffixIcon: suffixIcon,
-      filled: true,
-      fillColor: Colors.white,
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.primary,
+      backgroundColor: colorScheme.surface,
       body: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
           return SafeArea(
@@ -157,6 +156,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     maxHeight: constraints.maxHeight - 40,
                   ),
                   child: Card(
+                    color: colorScheme.surfaceContainerLow,
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(20),
                       child: Form(
@@ -179,11 +179,13 @@ class _RegisterPageState extends State<RegisterPage> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Implements `POST /api/v1/auth/register` for marketplace user accounts.',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: Colors.grey[700]),
-                            ),
+                               'Implements `POST /api/v1/auth/register` for marketplace user accounts.',
+                               textAlign: TextAlign.center,
+                               style: Theme.of(context).textTheme.bodySmall
+                                   ?.copyWith(
+                                     color: colorScheme.onSurfaceVariant,
+                                   ),
+                             ),
                             const SizedBox(height: 20),
                             Row(
                               children: [

@@ -175,14 +175,18 @@ class AuthApi {
           account?['marketplace_role'] ?? decoded['marketplace_role'];
       final dynamic trustedSeller =
           account?['trusted_seller'] ?? decoded['trusted_seller'];
+      final int? parsedAccountId = accountId is int
+          ? accountId
+          : int.tryParse('$accountId');
 
       ApiAuthSession.setAccount(
-        accountId: accountId is int ? accountId : int.tryParse('$accountId'),
-        email: email?.toString(),
-        username: username?.toString(),
-        accountType: accountType?.toString(),
-        marketplaceRole: marketplaceRole?.toString(),
-        trustedSeller: trustedSeller == true,
+        accountId: parsedAccountId ?? ApiAuthSession.accountId,
+        email: email?.toString() ?? ApiAuthSession.email,
+        username: username?.toString() ?? ApiAuthSession.username,
+        accountType: accountType?.toString() ?? ApiAuthSession.accountType,
+        marketplaceRole:
+            marketplaceRole?.toString() ?? ApiAuthSession.marketplaceRole,
+        trustedSeller: trustedSeller == true || ApiAuthSession.trustedSeller,
       );
     } catch (_) {}
   }

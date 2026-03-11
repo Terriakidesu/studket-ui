@@ -31,6 +31,10 @@ class ApiRoutes {
     return _build(path: 'listings/');
   }
 
+  static Uri listingById(int listingId) {
+    return _build(path: 'listings/$listingId');
+  }
+
   static Uri listingsForUser(int accountId) {
     return _build(path: 'listings/users/$accountId');
   }

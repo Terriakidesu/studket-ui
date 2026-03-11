@@ -99,16 +99,15 @@ class _LoginPageState extends State<LoginPage> {
       labelText: label,
       prefixIcon: prefixIcon == null ? null : Icon(prefixIcon),
       suffixIcon: suffixIcon,
-      filled: true,
-      fillColor: Colors.white,
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.primary,
+      backgroundColor: colorScheme.surface,
       body: LayoutBuilder(
         builder: (context, constraints) {
           return SafeArea(
@@ -121,6 +120,7 @@ class _LoginPageState extends State<LoginPage> {
                     maxHeight: constraints.maxHeight - 40,
                   ),
                   child: Card(
+                    color: colorScheme.surfaceContainerLow,
                     child: Padding(
                       padding: const EdgeInsets.all(20),
                       child: Form(

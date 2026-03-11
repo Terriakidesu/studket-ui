@@ -11,11 +11,17 @@ class ListingEditorPage extends StatefulWidget {
   const ListingEditorPage({
     super.key,
     this.listingType,
+    this.initialListing,
   });
 
   final String? listingType;
+  final ListingEditorDraft? initialListing;
 
-  bool get isLookingFor => listingType == 'looking_for';
+  bool get isLookingFor =>
+      initialListing?.listingType == 'looking_for' ||
+      listingType == 'looking_for';
+
+  bool get isEditing => initialListing != null;
 
   @override
   State<ListingEditorPage> createState() => _ListingEditorPageState();
@@ -62,13 +68,16 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
   List<String> _availableTags = _fallbackTags;
   bool _useBudgetRange = false;
   bool _isSubmitting = false;
+  bool _isDeleting = false;
   String? _submitError;
 
   bool get _isLookingForMode => widget.isLookingFor;
+  bool get _isEditing => widget.isEditing;
 
   @override
   void initState() {
     super.initState();
+    _populateInitialValues();
     unawaited(_loadPopularTags());
   }
 
@@ -115,19 +124,36 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
               (budgetMax != null && budgetMax < 0))) {
         throw const FormatException('Budget values cannot be negative.');
       }
-      final Map<String, dynamic> createdListing = await ListingsApi.createListing(
-        title: _titleController.text,
-        description: _descriptionController.text,
-        listingType: _isLookingForMode ? 'looking_for' : _selectedListingType,
-        price: _isLookingForMode ? null : amount,
-        budgetMin: _isLookingForMode ? budgetMin : null,
-        budgetMax: _isLookingForMode ? budgetMax : null,
-        condition: _isLookingForMode ? null : _selectedCondition,
-        tags: _selectedTags.toList(growable: false),
-      );
+      final Map<String, dynamic> savedListing = _isEditing
+          ? await ListingsApi.updateListing(
+              listingId: widget.initialListing!.listingId,
+              title: _titleController.text,
+              description: _descriptionController.text,
+              listingType:
+                  _isLookingForMode ? 'looking_for' : _selectedListingType,
+              price: _isLookingForMode ? null : amount,
+              budgetMin: _isLookingForMode ? budgetMin : null,
+              budgetMax: _isLookingForMode ? budgetMax : null,
+              condition: _isLookingForMode ? null : _selectedCondition,
+              tags: _selectedTags.toList(growable: false),
+              status: widget.initialListing?.status ?? 'available',
+            )
+          : await ListingsApi.createListing(
+              title: _titleController.text,
+              description: _descriptionController.text,
+              listingType:
+                  _isLookingForMode ? 'looking_for' : _selectedListingType,
+              price: _isLookingForMode ? null : amount,
+              budgetMin: _isLookingForMode ? budgetMin : null,
+              budgetMax: _isLookingForMode ? budgetMax : null,
+              condition: _isLookingForMode ? null : _selectedCondition,
+              tags: _selectedTags.toList(growable: false),
+            );
 
       if (!_isLookingForMode && _mediaFiles.isNotEmpty) {
-        final int? listingId = ListingsApi.extractListingId(createdListing);
+        final int? listingId = _isEditing
+            ? widget.initialListing?.listingId
+            : ListingsApi.extractListingId(savedListing);
         if (listingId == null) {
           throw const HttpException(
             'Listing was created, but media upload could not start because the listing id was missing from the response.',
@@ -142,7 +168,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
       if (!mounted) {
         return;
       }
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(ListingEditorResult.updated);
     } on TimeoutException {
       _setSubmitError('Listing request timed out.');
     } on SocketException {
@@ -156,7 +182,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
             : 'One or more numeric fields are invalid.',
       );
     } catch (_) {
-      _setSubmitError('Failed to create post.');
+      _setSubmitError(_isEditing ? 'Failed to update post.' : 'Failed to create post.');
     } finally {
       if (mounted) {
         setState(() {
@@ -173,6 +199,74 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     setState(() {
       _submitError = message;
     });
+  }
+
+  Future<void> _deleteListing() async {
+    if (!_isEditing || _isSubmitting || _isDeleting) {
+      return;
+    }
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        final bool isLookingFor = _isLookingForMode;
+        return AlertDialog(
+          title: Text(isLookingFor ? 'Delete Looking For Post?' : 'Delete Listing?'),
+          content: Text(
+            isLookingFor
+                ? 'This will permanently remove this looking for post.'
+                : 'This will permanently remove this listing.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              onPressed: () {
+                Navigator.of(context).pop(true);
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isDeleting = true;
+      _submitError = null;
+    });
+
+    try {
+      await ListingsApi.deleteListing(listingId: widget.initialListing!.listingId);
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(ListingEditorResult.deleted);
+    } on TimeoutException {
+      _setSubmitError('Delete request timed out.');
+    } on SocketException {
+      _setSubmitError('Could not connect to the listings API.');
+    } on HttpException catch (error) {
+      _setSubmitError(error.message);
+    } catch (_) {
+      _setSubmitError('Failed to delete post.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeleting = false;
+        });
+      }
+    }
   }
 
   num? _parseOptionalNum(String input) {
@@ -217,8 +311,46 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
         _availableTags = tags.where((String tag) => tag != 'looking_for').toList(
           growable: false,
         );
+        _selectedTags.removeWhere(
+          (String tag) => !_availableTags.contains(tag) && !_isCustomTag(tag),
+        );
       });
     } catch (_) {}
+  }
+
+  bool _isCustomTag(String tag) => !_fallbackTags.contains(tag);
+
+  void _populateInitialValues() {
+    final ListingEditorDraft? initial = widget.initialListing;
+    if (initial == null) {
+      return;
+    }
+    _titleController.text = initial.title;
+    _descriptionController.text = initial.description;
+    _selectedTags
+      ..clear()
+      ..addAll(initial.tags);
+    if (initial.listingType == 'looking_for') {
+      _useBudgetRange = initial.budgetMax != null;
+      if (_useBudgetRange) {
+        if (initial.budgetMin != null) {
+          _budgetMinController.text = '${initial.budgetMin}';
+        }
+        if (initial.budgetMax != null) {
+          _budgetMaxController.text = '${initial.budgetMax}';
+        }
+      } else if (initial.budgetMin != null) {
+        _priceController.text = '${initial.budgetMin}';
+      }
+    } else {
+      _selectedListingType = initial.listingType;
+      if (_conditions.contains(initial.condition)) {
+        _selectedCondition = initial.condition!;
+      }
+      if (initial.price != null) {
+        _priceController.text = '${initial.price}';
+      }
+    }
   }
 
   String _labelize(String value) {
@@ -279,21 +411,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
       hintText: hintText,
       prefixText: prefixText,
       alignLabelWithHint: alignLabelWithHint,
-      filled: true,
-      fillColor: const Color(0xFFF8FAFC),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFF111827), width: 1.4),
-      ),
     );
   }
 
@@ -302,18 +420,34 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     final ThemeData theme = Theme.of(context);
     final ColorScheme colorScheme = theme.colorScheme;
     final bool isLookingFor = _isLookingForMode;
-    final String title = isLookingFor
-        ? 'Create Looking For Post'
-        : 'Create Listing';
-    final String subtitle = isLookingFor
+    final String title = _isEditing
+        ? (isLookingFor ? 'Edit Looking For Post' : 'Edit Listing')
+        : (isLookingFor ? 'Create Looking For Post' : 'Create Listing');
+    final String subtitle = _isEditing
+        ? 'Update your post details and save the changes.'
+        : isLookingFor
         ? 'Describe what you need in a clear, compact post.'
         : 'Build a listing that feels clean, trustworthy, and easy to scan.';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
         title: Text(title),
         centerTitle: false,
+        actions: [
+          if (_isEditing)
+            IconButton(
+              tooltip: isLookingFor ? 'Delete looking for post' : 'Delete listing',
+              onPressed: _isSubmitting || _isDeleting ? null : _deleteListing,
+              icon: _isDeleting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_outline_rounded),
+            ),
+        ],
       ),
       body: SafeArea(
         child: Form(
@@ -329,11 +463,11 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                     ? const <String>[
                         'No media upload',
                         'Single budget field',
-                      ]
-                    : const <String>[
-                        'Photo upload supported',
-                        'Condition required',
-                      ],
+                       ]
+                     : const <String>[
+                         'Photo upload supported',
+                         'Condition required',
+                       ],
               ),
               const SizedBox(height: 16),
               _SectionCard(
@@ -450,7 +584,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                         'Selected Tags',
                         style: Theme.of(context).textTheme.labelLarge?.copyWith(
                           fontWeight: FontWeight.w700,
-                          color: const Color(0xFF4B5563),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -721,9 +855,9 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
+                          color: colorScheme.surfaceContainerLowest,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: const Color(0xFFE5E7EB)),
+                          border: Border.all(color: colorScheme.outlineVariant),
                         ),
                         child: Row(
                           children: [
@@ -731,12 +865,12 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                               width: 48,
                               height: 48,
                               decoration: BoxDecoration(
-                                color: const Color(0xFFE8F0FE),
+                                color: colorScheme.primaryContainer,
                                 borderRadius: BorderRadius.circular(16),
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.photo_library_outlined,
-                                color: Color(0xFF2563EB),
+                                color: colorScheme.primary,
                               ),
                             ),
                             const SizedBox(width: 12),
@@ -756,7 +890,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                                   Text(
                                     'Use bright images and keep the main item centered.',
                                     style: theme.textTheme.bodySmall?.copyWith(
-                                      color: const Color(0xFF6B7280),
+                                      color: colorScheme.onSurfaceVariant,
                                     ),
                                   ),
                                 ],
@@ -792,7 +926,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(20),
                                     border: Border.all(
-                                      color: const Color(0xFFE5E7EB),
+                                      color: colorScheme.outlineVariant,
                                     ),
                                   ),
                                   child: ClipRRect(
@@ -809,7 +943,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                                   right: 6,
                                   top: 6,
                                   child: Material(
-                                    color: Colors.black54,
+                                    color: colorScheme.scrim.withValues(alpha: 0.54),
                                     shape: const CircleBorder(),
                                     child: InkWell(
                                       customBorder: const CircleBorder(),
@@ -820,12 +954,12 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                                                 _mediaFiles.removeAt(index);
                                               });
                                             },
-                                      child: const Padding(
+                                      child: Padding(
                                         padding: EdgeInsets.all(4),
                                         child: Icon(
                                           Icons.close,
                                           size: 16,
-                                          color: Colors.white,
+                                          color: colorScheme.onPrimary,
                                         ),
                                       ),
                                     ),
@@ -845,13 +979,15 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF2F2),
+                    color: colorScheme.errorContainer,
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: const Color(0xFFFECACA)),
+                    border: Border.all(
+                      color: colorScheme.error.withValues(alpha: 0.28),
+                    ),
                   ),
                   child: Text(
                     _submitError!,
-                    style: const TextStyle(color: Color(0xFF991B1B)),
+                    style: TextStyle(color: colorScheme.onErrorContainer),
                   ),
                 ),
               ],
@@ -859,48 +995,84 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF9FAFB),
+                  color: colorScheme.surfaceContainerLowest,
                   borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
-                  boxShadow: const [
+                  border: Border.all(color: colorScheme.outlineVariant),
+                  boxShadow: [
                     BoxShadow(
-                      color: Color(0x08000000),
+                      color: colorScheme.shadow.withValues(alpha: 0.08),
                       blurRadius: 12,
-                      offset: Offset(0, 4),
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),
-                child: FilledButton.icon(
-                  onPressed: _isSubmitting ? null : _submit,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(54),
-                    backgroundColor: const Color(0xFF111827),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  icon: _isSubmitting
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Icon(
-                          isLookingFor
-                              ? Icons.search_outlined
-                              : Icons.sell_outlined,
+                child: Column(
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _isSubmitting || _isDeleting ? null : _submit,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(54),
+                        backgroundColor: colorScheme.primary,
+                        foregroundColor: colorScheme.onPrimary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
                         ),
-                  label: Text(
-                    _isSubmitting
-                        ? 'Posting...'
-                        : isLookingFor
-                        ? 'Publish Looking For Post'
-                        : 'Publish Listing',
-                  ),
+                      ),
+                      icon: _isSubmitting
+                          ? SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: colorScheme.onPrimary,
+                              ),
+                            )
+                          : Icon(
+                              isLookingFor
+                                  ? Icons.search_outlined
+                                  : Icons.sell_outlined,
+                            ),
+                      label: Text(
+                        _isSubmitting
+                            ? 'Posting...'
+                            : isLookingFor
+                            ? (_isEditing
+                                ? 'Save Looking For Post'
+                                : 'Publish Looking For Post')
+                            : (_isEditing ? 'Save Listing' : 'Publish Listing'),
+                      ),
+                    ),
+                    if (_isEditing) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _isSubmitting || _isDeleting ? null : _deleteListing,
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(50),
+                          foregroundColor: colorScheme.error,
+                          side: BorderSide(color: colorScheme.error),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        icon: _isDeleting
+                            ? SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: colorScheme.error,
+                                ),
+                              )
+                            : const Icon(Icons.delete_outline_rounded),
+                        label: Text(
+                          isLookingFor
+                              ? 'Delete Looking For Post'
+                              : 'Delete Listing',
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
@@ -909,6 +1081,37 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
       ),
     );
   }
+}
+
+enum ListingEditorResult {
+  updated,
+  deleted,
+}
+
+class ListingEditorDraft {
+  const ListingEditorDraft({
+    required this.listingId,
+    required this.title,
+    required this.description,
+    required this.listingType,
+    required this.status,
+    this.price,
+    this.budgetMin,
+    this.budgetMax,
+    this.condition,
+    this.tags = const <String>[],
+  });
+
+  final int listingId;
+  final String title;
+  final String description;
+  final String listingType;
+  final String status;
+  final num? price;
+  final num? budgetMin;
+  final num? budgetMax;
+  final String? condition;
+  final List<String> tags;
 }
 
 class _HeroPanel extends StatelessWidget {
@@ -926,23 +1129,24 @@ class _HeroPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           colors: <Color>[
-            Color(0xFF111827),
-            Color(0xFF1F2937),
+            colorScheme.primary,
+            colorScheme.primaryFixedDim,
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(30),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
-            color: Color(0x1A111827),
+            color: colorScheme.shadow.withValues(alpha: 0.16),
             blurRadius: 24,
-            offset: Offset(0, 12),
+            offset: const Offset(0, 12),
           ),
         ],
       ),
@@ -952,13 +1156,13 @@ class _HeroPanel extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.12),
+              color: colorScheme.onPrimary.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
               accentLabel,
               style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: Colors.white,
+                color: colorScheme.onPrimary,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -967,7 +1171,7 @@ class _HeroPanel extends StatelessWidget {
           Text(
             title,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: Colors.white,
+                color: colorScheme.onPrimary,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -975,7 +1179,7 @@ class _HeroPanel extends StatelessWidget {
           Text(
             subtitle,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Colors.white.withValues(alpha: 0.88),
+              color: colorScheme.onPrimary.withValues(alpha: 0.88),
               height: 1.45,
             ),
           ),
@@ -991,16 +1195,16 @@ class _HeroPanel extends StatelessWidget {
                       vertical: 7,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.08),
+                      color: colorScheme.onPrimary.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.12),
+                        color: colorScheme.onPrimary.withValues(alpha: 0.12),
                       ),
                     ),
                     child: Text(
                       item,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.white,
+                        color: colorScheme.onPrimary,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1027,17 +1231,18 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-        boxShadow: const [
+        border: Border.all(color: colorScheme.outlineVariant),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x08000000),
+            color: colorScheme.shadow.withValues(alpha: 0.08),
             blurRadius: 14,
-            offset: Offset(0, 6),
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -1053,9 +1258,9 @@ class _SectionCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             subtitle,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: const Color(0xFF6B7280),
-            ),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
           ),
           const SizedBox(height: 16),
           child,
@@ -1078,8 +1283,9 @@ class _InfoPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Material(
-      color: const Color(0xFF111827),
+      color: colorScheme.inverseSurface,
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: onTap,
@@ -1090,12 +1296,12 @@ class _InfoPill extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 18, color: Colors.white),
+              Icon(icon, size: 18, color: colorScheme.onInverseSurface),
               const SizedBox(width: 8),
               Text(
                 label,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.white,
+                  color: colorScheme.onInverseSurface,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1120,23 +1326,24 @@ class _SummaryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Row(
         children: [
           Container(
             width: 38,
             height: 38,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE5E7EB),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, size: 18, color: const Color(0xFF111827)),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, size: 18, color: colorScheme.onSurface),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1146,7 +1353,7 @@ class _SummaryTile extends StatelessWidget {
                 Text(
                   title,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: const Color(0xFF6B7280),
+                    color: colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -1154,7 +1361,7 @@ class _SummaryTile extends StatelessWidget {
                 Text(
                   value,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF111827),
+                    color: colorScheme.onSurface,
                     fontWeight: FontWeight.w700,
                   ),
                 ),

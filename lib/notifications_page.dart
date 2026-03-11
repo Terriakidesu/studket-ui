@@ -36,6 +36,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: StudketAppBar(
         title: 'Notifications',
@@ -114,7 +115,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     _isStaffAccountType(conversation.otherAccountType);
 
                 return ListTile(
-                  tileColor: isUnread ? Colors.blue[50] : null,
+                  tileColor: isUnread ? colorScheme.primaryContainer : null,
                   leading: _NotificationTypeIcon(notification: latest),
                   onTap: () {
                     _openMessageGroup(context, latest);
@@ -139,13 +140,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFE8EAFF),
+                            color: colorScheme.secondaryContainer,
                             borderRadius: BorderRadius.circular(999),
                           ),
-                          child: const Text(
+                          child: Text(
                             'Staff',
                             style: TextStyle(
-                              color: Color(0xFF4752C4),
+                              color: colorScheme.onSecondaryContainer,
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),
@@ -167,10 +168,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
                           children: [
                             Text(
                               '$unreadCount unread',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF2563EB),
+                                color: colorScheme.primary,
                               ),
                             ),
                             const SizedBox(height: 4),
@@ -185,12 +186,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                   }
                                 }
                               },
-                              child: const Text(
+                              child: Text(
                                 'Read all',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
-                                  color: Color(0xFF2563EB),
+                                  color: colorScheme.primary,
                                 ),
                               ),
                             ),
@@ -202,8 +203,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
               return ExpansionTile(
                 initiallyExpanded: index == 0,
-                collapsedBackgroundColor: isUnread ? Colors.blue[50] : null,
-                backgroundColor: isUnread ? Colors.blue[50] : null,
+                collapsedBackgroundColor: isUnread
+                    ? colorScheme.primaryContainer
+                    : null,
+                backgroundColor: isUnread ? colorScheme.primaryContainer : null,
                 leading: _NotificationTypeIcon(notification: latest),
                 title: Text(
                   group.title,
@@ -234,7 +237,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     : const Icon(Icons.done_all, size: 18),
                 children: group.items.map((UserRealtimeNotification item) {
                   return ListTile(
-                    tileColor: item.isRead ? null : Colors.blue[50],
+                    tileColor:
+                        item.isRead ? null : colorScheme.primaryContainer,
                     leading: _NotificationTypeIcon(notification: item),
                     title: Text(
                       item.title,
@@ -428,13 +432,14 @@ class _NotificationTypeIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final String type = notification.notificationType.toLowerCase();
     final String entity =
         (notification.relatedEntityType ?? '').toLowerCase();
 
     IconData icon = Icons.notifications_none;
-    Color background = const Color(0xFFF3F4F6);
-    Color foreground = const Color(0xFF4B5563);
+    Color background = colorScheme.surfaceContainerLow;
+    Color foreground = colorScheme.onSurfaceVariant;
 
     if (type.contains('message') ||
         type.contains('chat') ||
@@ -442,24 +447,24 @@ class _NotificationTypeIcon extends StatelessWidget {
         entity.contains('conversation') ||
         entity.contains('chat')) {
       icon = Icons.chat_bubble_outline;
-      background = const Color(0xFFE0F2FE);
-      foreground = const Color(0xFF0369A1);
+      background = colorScheme.primaryContainer;
+      foreground = colorScheme.onPrimaryContainer;
     } else if (type.contains('verification') || entity.contains('verification')) {
       icon = Icons.verified_outlined;
-      background = const Color(0xFFFFF4D6);
-      foreground = const Color(0xFFB7791F);
+      background = colorScheme.tertiaryContainer;
+      foreground = colorScheme.onTertiaryContainer;
     } else if (type.contains('listing') || entity.contains('listing')) {
       icon = Icons.sell_outlined;
-      background = const Color(0xFFEDE9FE);
-      foreground = const Color(0xFF6D28D9);
+      background = colorScheme.secondaryContainer;
+      foreground = colorScheme.onSecondaryContainer;
     } else if (type.contains('seller') || entity.contains('seller')) {
       icon = Icons.storefront_outlined;
-      background = const Color(0xFFDCFCE7);
-      foreground = const Color(0xFF15803D);
+      background = colorScheme.primaryContainer;
+      foreground = colorScheme.primary;
     } else if (type.contains('warning') || type.contains('report')) {
       icon = Icons.warning_amber_rounded;
-      background = const Color(0xFFFFEDD5);
-      foreground = const Color(0xFFC2410C);
+      background = colorScheme.errorContainer;
+      foreground = colorScheme.onErrorContainer;
     }
 
     return Container(

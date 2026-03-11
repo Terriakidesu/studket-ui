@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'app_theme_controller.dart';
 import 'app_entry_page.dart';
 import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
@@ -17,6 +17,7 @@ import 'api/api_session_storage.dart';
 import 'api/auth_api.dart';
 import 'api/user_realtime_service.dart';
 import 'components/account_avatar.dart';
+import 'listing_editor_page.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
@@ -264,15 +265,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
         ...ApiAuthSession.authHeaders(),
       };
 
-      if (kDebugMode) {
-        debugPrint(
-          'UserProfilePage._loadMyPosts -> GET ${ApiRoutes.listingsForUser(accountId)}',
-        );
-        debugPrint(
-          'UserProfilePage._loadMyPosts -> GET ${ApiRoutes.lookingForListingsForUser(accountId)}',
-        );
-      }
-
       final Future<http.Response> listingsRequest = http
           .get(ApiRoutes.listingsForUser(accountId), headers: headers)
           .timeout(kApiRequestTimeout);
@@ -293,15 +285,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
       }
       if (lookingForResponse.statusCode < 200 || lookingForResponse.statusCode >= 300) {
         throw HttpException(_extractPostsError(lookingForResponse));
-      }
-
-      if (kDebugMode) {
-        debugPrint(
-          'UserProfilePage._loadMyPosts <- listings HTTP ${listingsResponse.statusCode}',
-        );
-        debugPrint(
-          'UserProfilePage._loadMyPosts <- looking-for HTTP ${lookingForResponse.statusCode}',
-        );
       }
 
       final List<_ProfileListing> listings = _parseProfileListingsResponse(
@@ -383,23 +366,11 @@ class _UserProfilePageState extends State<UserProfilePage> {
               const <dynamic>[])
         : const <dynamic>[];
 
-    if (kDebugMode) {
-      debugPrint(
-        'UserProfilePage._parseProfileListingsResponse[$label] parsed ${items.length} raw item(s)',
-      );
-    }
-
     final List<_ProfileListing> parsed = items
         .whereType<Map<String, dynamic>>()
         .map(_ProfileListing.fromJson)
         .where((item) => item.ownerId == null || item.ownerId == accountId)
         .toList(growable: false);
-
-    if (kDebugMode) {
-      debugPrint(
-        'UserProfilePage._parseProfileListingsResponse[$label] kept ${parsed.length} item(s)',
-      );
-    }
 
     return parsed;
   }
@@ -427,7 +398,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final bool isTrustedSeller = ApiAuthSession.trustedSeller;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F3F5),
+      backgroundColor: theme.colorScheme.surface,
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -435,13 +406,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: theme.colorScheme.surfaceContainerLow,
                 borderRadius: BorderRadius.circular(28),
-                boxShadow: const [
+                boxShadow: [
                   BoxShadow(
-                    color: Color(0x14000000),
+                    color: theme.colorScheme.shadow.withValues(alpha: 0.08),
                     blurRadius: 18,
-                    offset: Offset(0, 8),
+                    offset: const Offset(0, 8),
                   ),
                 ],
               ),
@@ -454,17 +425,17 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       Container(
                         padding: const EdgeInsets.all(5),
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: theme.colorScheme.surface,
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: const Color(0xFF1E1F22),
+                            color: theme.colorScheme.outlineVariant,
                             width: 4,
                           ),
-                          boxShadow: const [
+                          boxShadow: [
                             BoxShadow(
-                              color: Color(0x12000000),
+                              color: theme.colorScheme.shadow.withValues(alpha: 0.08),
                               blurRadius: 12,
-                              offset: Offset(0, 6),
+                              offset: const Offset(0, 6),
                             ),
                           ],
                         ),
@@ -474,14 +445,14 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             AccountAvatar(
                               accountId: ApiAuthSession.accountId,
                               radius: 42,
-                              backgroundColor: const Color(0xFF1E1F22),
+                              backgroundColor: theme.colorScheme.surfaceContainerHighest,
                               label: username,
                             ),
                             Positioned(
                               right: -2,
                               bottom: -2,
                               child: Material(
-                                color: const Color(0xFF5865F2),
+                                color: theme.colorScheme.primary,
                                 shape: const CircleBorder(),
                                 child: InkWell(
                                   customBorder: const CircleBorder(),
@@ -491,18 +462,18 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                   child: Padding(
                                     padding: const EdgeInsets.all(8),
                                     child: _isUploadingProfilePicture
-                                        ? const SizedBox(
+                                        ? SizedBox(
                                             width: 14,
                                             height: 14,
                                             child: CircularProgressIndicator(
                                               strokeWidth: 2,
-                                              color: Colors.white,
+                                              color: theme.colorScheme.onPrimary,
                                             ),
                                           )
-                                        : const Icon(
+                                        : Icon(
                                             Icons.camera_alt_outlined,
                                             size: 14,
-                                            color: Colors.white,
+                                            color: theme.colorScheme.onPrimary,
                                           ),
                                   ),
                                 ),
@@ -518,14 +489,14 @@ class _UserProfilePageState extends State<UserProfilePage> {
                     username,
                     style: theme.textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.w800,
-                      color: const Color(0xFF1E1F22),
+                      color: theme.colorScheme.onSurface,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     email,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      color: const Color(0xFF6B7280),
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: 14),
@@ -535,28 +506,28 @@ class _UserProfilePageState extends State<UserProfilePage> {
                     children: [
                       _DiscordTag(
                         label: _capitalize(accountType),
-                        backgroundColor: const Color(0xFFE8EAFF),
-                        foregroundColor: const Color(0xFF4752C4),
+                        backgroundColor: theme.colorScheme.secondaryContainer,
+                        foregroundColor: theme.colorScheme.onSecondaryContainer,
                       ),
                       _DiscordTag(
                         label: _capitalize(marketplaceRole),
                         backgroundColor: isSeller
-                            ? const Color(0xFFE7F7EC)
-                            : const Color(0xFFF3F4F6),
+                            ? theme.colorScheme.primaryContainer
+                            : theme.colorScheme.surfaceContainerHighest,
                         foregroundColor: isSeller
-                            ? const Color(0xFF1F8F4D)
-                            : const Color(0xFF6B7280),
+                            ? theme.colorScheme.onPrimaryContainer
+                            : theme.colorScheme.onSurfaceVariant,
                       ),
                       _DiscordTag(
                         label: isTrustedSeller
                             ? 'Trusted Seller'
                             : 'Not Trusted Yet',
                         backgroundColor: isTrustedSeller
-                            ? const Color(0xFFFFF1D6)
-                            : const Color(0xFFF3F4F6),
+                            ? theme.colorScheme.tertiaryContainer
+                            : theme.colorScheme.surfaceContainerHighest,
                         foregroundColor: isTrustedSeller
-                            ? const Color(0xFFC27C0E)
-                            : const Color(0xFF6B7280),
+                            ? theme.colorScheme.onTertiaryContainer
+                            : theme.colorScheme.onSurfaceVariant,
                       ),
                     ],
                   ),
@@ -605,8 +576,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: isTrustedSeller
-                            ? const Color(0xFFFFF6E5)
-                            : const Color(0xFFEFF6FF),
+                            ? theme.colorScheme.tertiaryContainer
+                            : theme.colorScheme.primaryContainer,
                         borderRadius: BorderRadius.circular(18),
                       ),
                       child: Row(
@@ -617,8 +588,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                 ? Icons.verified_rounded
                                 : Icons.storefront_rounded,
                             color: isTrustedSeller
-                                ? const Color(0xFFC27C0E)
-                                : const Color(0xFF2563EB),
+                                ? theme.colorScheme.onTertiaryContainer
+                                : theme.colorScheme.onPrimaryContainer,
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -627,7 +598,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                   ? 'Your account already has trusted seller status.'
                                   : 'You are already a seller. You can now request trusted seller review.',
                               style: theme.textTheme.bodyMedium?.copyWith(
-                                color: const Color(0xFF374151),
+                                color: theme.colorScheme.onSurfaceVariant,
                                 height: 1.4,
                               ),
                             ),
@@ -645,18 +616,18 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             : _requestTrustedSeller,
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 14),
-                          backgroundColor: const Color(0xFF5865F2),
+                          backgroundColor: theme.colorScheme.primary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
                         ),
                         child: _isSubmittingTrustedSellerRequest
-                            ? const SizedBox(
+                            ? SizedBox(
                                 width: 18,
                                 height: 18,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: theme.colorScheme.onPrimary,
                                 ),
                               )
                             : Text(
@@ -681,7 +652,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                           child: Text(
                             'Manage what is currently live on your seller account.',
                             style: theme.textTheme.bodyMedium?.copyWith(
-                              color: const Color(0xFF6B7280),
+                              color: theme.colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ),
@@ -702,14 +673,16 @@ class _UserProfilePageState extends State<UserProfilePage> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFEF2F2),
+                          color: theme.colorScheme.errorContainer,
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0xFFFECACA)),
+                          border: Border.all(
+                            color: theme.colorScheme.error.withValues(alpha: 0.28),
+                          ),
                         ),
                         child: Text(
                           _myPostsError!,
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: const Color(0xFF991B1B),
+                            color: theme.colorScheme.onErrorContainer,
                           ),
                         ),
                       )
@@ -725,10 +698,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                 title: 'Current Listings',
                                 emptyLabel: 'No active listings yet.',
                                 items: _activeListings,
+                                onEdit: _editProfileListing,
                               ),
                             ),
                           );
                         },
+                        onEdit: _editProfileListing,
                       ),
                       const SizedBox(height: 16),
                       _PostsGroup(
@@ -742,10 +717,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                 title: 'Looking For Posts',
                                 emptyLabel: 'No active looking for posts yet.',
                                 items: _lookingForPosts,
+                                onEdit: _editProfileListing,
                               ),
                             ),
                           );
                         },
+                        onEdit: _editProfileListing,
                       ),
                     ],
                   ],
@@ -761,6 +738,26 @@ class _UserProfilePageState extends State<UserProfilePage> {
                     icon: Icons.shield_outlined,
                     label: 'Saved Session',
                     value: 'Active on this device',
+                  ),
+                  const Divider(height: 24),
+                  AnimatedBuilder(
+                    animation: AppThemeController.instance,
+                    builder: (BuildContext context, _) {
+                      return _ActionRow(
+                        icon: Icons.dark_mode_outlined,
+                        label: 'Appearance',
+                        value: _themePreferenceLabel(
+                          AppThemeController.instance.themeMode,
+                        ),
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const AppearanceSettingsPage(),
+                            ),
+                          );
+                        },
+                      );
+                    },
                   ),
                   const Divider(height: 24),
                   _ActionRow(
@@ -785,6 +782,50 @@ class _UserProfilePageState extends State<UserProfilePage> {
     }
     return value[0].toUpperCase() + value.substring(1);
   }
+
+  String _themePreferenceLabel(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return 'Light mode';
+      case ThemeMode.dark:
+        return 'Dark mode';
+      case ThemeMode.system:
+        return 'Follow device';
+    }
+  }
+
+  Future<void> _editProfileListing(_ProfileListing item) async {
+    final ListingEditorResult? result =
+        await Navigator.of(context).push<ListingEditorResult>(
+      MaterialPageRoute(
+        builder: (_) => ListingEditorPage(
+          initialListing: ListingEditorDraft(
+            listingId: item.id,
+            title: item.title,
+            description: item.description,
+            listingType: item.listingType,
+            status: item.status,
+            price: item.price,
+            budgetMin: item.budgetMin,
+            budgetMax: item.budgetMax,
+            condition: item.condition,
+            tags: item.tags,
+          ),
+        ),
+      ),
+    );
+    if (result != null) {
+      await _loadMyPosts();
+      if (!mounted) {
+        return;
+      }
+      _showMessage(
+        result == ListingEditorResult.deleted
+            ? 'Post deleted.'
+            : 'Post updated.',
+      );
+    }
+  }
 }
 
 class _ProfileListing {
@@ -795,6 +836,9 @@ class _ProfileListing {
     required this.listingType,
     required this.status,
     required this.price,
+    required this.budgetMin,
+    required this.budgetMax,
+    required this.condition,
     required this.ownerId,
     required this.tags,
   });
@@ -805,6 +849,9 @@ class _ProfileListing {
   final String listingType;
   final String status;
   final num? price;
+  final num? budgetMin;
+  final num? budgetMax;
+  final String? condition;
   final int? ownerId;
   final List<String> tags;
 
@@ -818,6 +865,9 @@ class _ProfileListing {
       listingType: (json['listing_type'] ?? 'listing').toString(),
       status: (json['status'] ?? 'unknown').toString(),
       price: json['price'] as num?,
+      budgetMin: json['budget_min'] as num?,
+      budgetMax: json['budget_max'] as num?,
+      condition: json['condition']?.toString(),
       ownerId: (json['owner_id'] as num?)?.toInt() ??
           (json['seller_id'] as num?)?.toInt() ??
           (json['account_id'] as num?)?.toInt(),
@@ -841,16 +891,17 @@ class _DiscordSectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
-            color: Color(0x10000000),
+            color: colorScheme.shadow.withValues(alpha: 0.06),
             blurRadius: 14,
-            offset: Offset(0, 6),
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -862,7 +913,7 @@ class _DiscordSectionCard extends StatelessWidget {
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
               fontWeight: FontWeight.w800,
               letterSpacing: 0.8,
-              color: const Color(0xFF6B7280),
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 14),
@@ -921,7 +972,8 @@ class _ActionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color = danger ? const Color(0xFFDC2626) : const Color(0xFF111827);
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final Color color = danger ? colorScheme.error : colorScheme.onSurface;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
@@ -933,7 +985,9 @@ class _ActionRow extends StatelessWidget {
               width: 38,
               height: 38,
               decoration: BoxDecoration(
-                color: danger ? const Color(0xFFFEE2E2) : const Color(0xFFF3F4F6),
+                color: danger
+                    ? colorScheme.errorContainer
+                    : colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(icon, color: color, size: 20),
@@ -954,7 +1008,7 @@ class _ActionRow extends StatelessWidget {
                   Text(
                     value,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFF6B7280),
+                      color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
@@ -974,12 +1028,14 @@ class _PostsGroup extends StatelessWidget {
     required this.emptyLabel,
     required this.items,
     required this.onTap,
+    required this.onEdit,
   });
 
   final String title;
   final String emptyLabel;
   final List<_ProfileListing> items;
   final VoidCallback onTap;
+  final ValueChanged<_ProfileListing> onEdit;
 
   static const int _previewCount = 3;
 
@@ -993,6 +1049,7 @@ class _PostsGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
     final bool hasMoreThanPreview = items.length > _previewCount;
     final List<_ProfileListing> visibleItems = items
         .take(_previewCount)
@@ -1013,7 +1070,7 @@ class _PostsGroup extends StatelessWidget {
                     title,
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w800,
-                      color: const Color(0xFF111827),
+                      color: colorScheme.onSurface,
                     ),
                   ),
                 ),
@@ -1023,15 +1080,15 @@ class _PostsGroup extends StatelessWidget {
                         ? 'Recent ${visibleItems.length} of ${items.length}'
                         : '${items.length} item${items.length == 1 ? '' : 's'}',
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFF6B7280),
+                      color: colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 if (items.isNotEmpty) ...[
                   const SizedBox(width: 8),
-                  const Icon(
+                  Icon(
                     Icons.chevron_right_rounded,
-                    color: Color(0xFF6B7280),
+                    color: colorScheme.onSurfaceVariant,
                   ),
                 ],
               ],
@@ -1044,20 +1101,21 @@ class _PostsGroup extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
+              color: colorScheme.surfaceContainerLowest,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFE5E7EB)),
+              border: Border.all(color: colorScheme.outlineVariant),
             ),
             child: Text(
               emptyLabel,
               style: theme.textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF6B7280),
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
           )
         else ...[
           ...visibleItems.map(
-            (_ProfileListing item) => _ProfileListingCard(item: item),
+            (_ProfileListing item) =>
+                _ProfileListingCard(item: item, onEdit: onEdit),
           ),
           if (hasMoreThanPreview)
             TextButton(
@@ -1075,17 +1133,20 @@ class _PostsListPage extends StatelessWidget {
     required this.title,
     required this.emptyLabel,
     required this.items,
+    required this.onEdit,
   });
 
   final String title;
   final String emptyLabel;
   final List<_ProfileListing> items;
+  final ValueChanged<_ProfileListing> onEdit;
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F3F5),
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(title: Text(title)),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -1095,20 +1156,21 @@ class _PostsListPage extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: colorScheme.surfaceContainerLow,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
+                border: Border.all(color: colorScheme.outlineVariant),
               ),
               child: Text(
                 emptyLabel,
                 style: theme.textTheme.titleSmall?.copyWith(
-                  color: const Color(0xFF6B7280),
+                  color: colorScheme.onSurfaceVariant,
                 ),
               ),
             )
           else
             ...items.map(
-              (_ProfileListing item) => _ProfileListingCard(item: item),
+              (_ProfileListing item) =>
+                  _ProfileListingCard(item: item, onEdit: onEdit),
             ),
         ],
       ),
@@ -1117,9 +1179,13 @@ class _PostsListPage extends StatelessWidget {
 }
 
 class _ProfileListingCard extends StatelessWidget {
-  const _ProfileListingCard({required this.item});
+  const _ProfileListingCard({
+    required this.item,
+    required this.onEdit,
+  });
 
   final _ProfileListing item;
+  final ValueChanged<_ProfileListing> onEdit;
 
   String _formatPrice(num? price) {
     if (price == null) {
@@ -1133,13 +1199,14 @@ class _ProfileListingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1150,25 +1217,33 @@ class _ProfileListingCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   item.title,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF111827),
-                  ),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onSurface,
+                    ),
                 ),
               ),
               const SizedBox(width: 8),
-              _DiscordTag(
-                label: item.status,
-                backgroundColor: const Color(0xFFE5E7EB),
-                foregroundColor: const Color(0xFF374151),
-              ),
-            ],
-          ),
+                       _DiscordTag(
+                         label: item.status,
+                         backgroundColor: colorScheme.surfaceContainerHighest,
+                         foregroundColor: colorScheme.onSurfaceVariant,
+                       ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Edit post',
+                        onPressed: () {
+                          onEdit(item);
+                        },
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                      ),
+                    ],
+                  ),
           const SizedBox(height: 6),
           Text(
             _formatPrice(item.price),
             style: theme.textTheme.bodyMedium?.copyWith(
-              color: const Color(0xFF2563EB),
+              color: colorScheme.primary,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1179,7 +1254,7 @@ class _ProfileListingCard extends StatelessWidget {
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF4B5563),
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
           ],
@@ -1192,8 +1267,8 @@ class _ProfileListingCard extends StatelessWidget {
                   .map(
                     (String tag) => _DiscordTag(
                       label: tag,
-                      backgroundColor: const Color(0xFFE8EAFF),
-                      foregroundColor: const Color(0xFF4752C4),
+                      backgroundColor: colorScheme.secondaryContainer,
+                      foregroundColor: colorScheme.onSecondaryContainer,
                     ),
                   )
                   .toList(growable: false),
@@ -1216,7 +1291,7 @@ class AccountSettingsPage extends StatelessWidget {
     final String marketplaceRole = ApiAuthSession.marketplaceRole ?? 'buyer';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F3F5),
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(title: const Text('Account Settings')),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -1243,22 +1318,57 @@ class AccountSettingsPage extends StatelessWidget {
           const SizedBox(height: 16),
           _DiscordSectionCard(
             title: 'Preferences',
-            child: _ActionRow(
-              icon: Icons.security_outlined,
-              label: 'Security',
-              value: 'Session and account protection details',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const SecurityPage(),
-                  ),
-                );
-              },
+            child: Column(
+              children: [
+                AnimatedBuilder(
+                  animation: AppThemeController.instance,
+                  builder: (BuildContext context, _) {
+                    return _ActionRow(
+                      icon: Icons.dark_mode_outlined,
+                      label: 'Appearance',
+                      value: _themeModeLabel(
+                        AppThemeController.instance.themeMode,
+                      ),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const AppearanceSettingsPage(),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+                const Divider(height: 24),
+                _ActionRow(
+                  icon: Icons.security_outlined,
+                  label: 'Security',
+                  value: 'Session and account protection details',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SecurityPage(),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  String _themeModeLabel(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return 'Light mode';
+      case ThemeMode.dark:
+        return 'Dark mode';
+      case ThemeMode.system:
+        return 'Follow device';
+    }
   }
 }
 
@@ -1268,7 +1378,7 @@ class SecurityPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F3F5),
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(title: const Text('Security')),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -1298,7 +1408,7 @@ class SecurityPage extends StatelessWidget {
                 Text(
                   'Use logout if you are sharing this device or want to clear the locally saved session.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF4B5563),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     height: 1.45,
                   ),
                 ),
@@ -1306,7 +1416,7 @@ class SecurityPage extends StatelessWidget {
                 Text(
                   'Password change and session management endpoints are not documented in the current backend reference yet.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF4B5563),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     height: 1.45,
                   ),
                 ),
@@ -1315,6 +1425,92 @@ class SecurityPage extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class AppearanceSettingsPage extends StatelessWidget {
+  const AppearanceSettingsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: AppThemeController.instance,
+      builder: (BuildContext context, _) {
+        final ThemeMode selectedMode = AppThemeController.instance.themeMode;
+        return Scaffold(
+          backgroundColor: Theme.of(context).colorScheme.surface,
+          appBar: AppBar(title: const Text('Appearance')),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _DiscordSectionCard(
+                title: 'Theme',
+                child: Column(
+                  children: [
+                    _ThemeModeTile(
+                      title: 'Follow Device',
+                      subtitle: 'Use the system light or dark preference.',
+                      value: ThemeMode.system,
+                      groupValue: selectedMode,
+                    ),
+                    const Divider(height: 24),
+                    _ThemeModeTile(
+                      title: 'Light',
+                      subtitle: 'Always use the light theme.',
+                      value: ThemeMode.light,
+                      groupValue: selectedMode,
+                    ),
+                    const Divider(height: 24),
+                    _ThemeModeTile(
+                      title: 'Dark',
+                      subtitle: 'Always use the dark theme.',
+                      value: ThemeMode.dark,
+                      groupValue: selectedMode,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ThemeModeTile extends StatelessWidget {
+  const _ThemeModeTile({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.groupValue,
+  });
+
+  final String title;
+  final String subtitle;
+  final ThemeMode value;
+  final ThemeMode groupValue;
+
+  @override
+  Widget build(BuildContext context) {
+    return RadioListTile<ThemeMode>(
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        title,
+        style: Theme.of(
+          context,
+        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+      ),
+      subtitle: Text(subtitle),
+      value: value,
+      groupValue: groupValue,
+      onChanged: (ThemeMode? nextValue) {
+        if (nextValue == null) {
+          return;
+        }
+        AppThemeController.instance.setThemeMode(nextValue);
+      },
     );
   }
 }
@@ -1338,7 +1534,7 @@ class _SettingInfoLine extends StatelessWidget {
           Text(
             label.toUpperCase(),
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: const Color(0xFF9CA3AF),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.7,
             ),
@@ -1347,7 +1543,7 @@ class _SettingInfoLine extends StatelessWidget {
           Text(
             value,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: const Color(0xFF111827),
+              color: Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w600,
             ),
           ),

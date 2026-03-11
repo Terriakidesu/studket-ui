@@ -11,29 +11,35 @@ import 'api_routes.dart';
 class ListingsApi {
   const ListingsApi._();
 
-  static Future<Map<String, dynamic>> createListing({
-    required String title,
-    required String description,
-    required String listingType,
+  static Map<String, dynamic> _buildListingPayload({
+    int? ownerId,
+    String? title,
+    String? description,
+    String? listingType,
     num? price,
     num? budgetMin,
     num? budgetMax,
     String? condition,
     List<String> tags = const <String>[],
-  }) async {
-    final int? accountId = ApiAuthSession.accountId;
-    if (accountId == null) {
-      throw const HttpException('No authenticated account id found.');
-    }
-
+    String? status,
+  }) {
     final String? normalizedCondition = condition?.trim();
-    final Map<String, dynamic> payload = <String, dynamic>{
-      'owner_id': accountId,
-      'title': title.trim(),
-      'description': description.trim(),
-      'listing_type': listingType,
-      'status': 'available',
-    };
+    final Map<String, dynamic> payload = <String, dynamic>{};
+    if (ownerId != null) {
+      payload['owner_id'] = ownerId;
+    }
+    if (title != null) {
+      payload['title'] = title.trim();
+    }
+    if (description != null) {
+      payload['description'] = description.trim();
+    }
+    if (listingType != null) {
+      payload['listing_type'] = listingType;
+    }
+    if (status != null) {
+      payload['status'] = status;
+    }
     if (price != null) {
       payload['price'] = price;
     }
@@ -49,6 +55,36 @@ class ListingsApi {
     if (tags.isNotEmpty) {
       payload['tags'] = tags;
     }
+    return payload;
+  }
+
+  static Future<Map<String, dynamic>> createListing({
+    required String title,
+    required String description,
+    required String listingType,
+    num? price,
+    num? budgetMin,
+    num? budgetMax,
+    String? condition,
+    List<String> tags = const <String>[],
+  }) async {
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null) {
+      throw const HttpException('No authenticated account id found.');
+    }
+
+    final Map<String, dynamic> payload = _buildListingPayload(
+      ownerId: accountId,
+      title: title,
+      description: description,
+      listingType: listingType,
+      status: 'available',
+      price: price,
+      budgetMin: budgetMin,
+      budgetMax: budgetMax,
+      condition: condition,
+      tags: tags,
+    );
 
     final http.Response response = await http
         .post(
@@ -71,6 +107,69 @@ class ListingsApi {
       return decoded;
     }
     return <String, dynamic>{};
+  }
+
+  static Future<Map<String, dynamic>> updateListing({
+    required int listingId,
+    required String title,
+    required String description,
+    required String listingType,
+    num? price,
+    num? budgetMin,
+    num? budgetMax,
+    String? condition,
+    List<String> tags = const <String>[],
+    String status = 'available',
+  }) async {
+    final Map<String, dynamic> payload = _buildListingPayload(
+      title: title,
+      description: description,
+      listingType: listingType,
+      status: status,
+      price: price,
+      budgetMin: budgetMin,
+      budgetMax: budgetMax,
+      condition: condition,
+      tags: tags,
+    );
+
+    final http.Response response = await http
+        .patch(
+          ApiRoutes.listingById(listingId),
+          headers: <String, String>{
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            ...ApiAuthSession.authHeaders(),
+          },
+          body: jsonEncode(payload),
+        )
+        .timeout(kApiRequestTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(_extractErrorMessage(response));
+    }
+
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    return <String, dynamic>{};
+  }
+
+  static Future<void> deleteListing({required int listingId}) async {
+    final http.Response response = await http
+        .delete(
+          ApiRoutes.listingById(listingId),
+          headers: <String, String>{
+            'Accept': 'application/json',
+            ...ApiAuthSession.authHeaders(),
+          },
+        )
+        .timeout(kApiRequestTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(_extractErrorMessage(response));
+    }
   }
 
   static Future<void> uploadListingMedia({

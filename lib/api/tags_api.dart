@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_auth_session.dart';
@@ -14,9 +13,6 @@ class TagsApi {
 
   static Future<List<String>> fetchPopularTags({int limit = 20}) async {
     final Uri uri = ApiRoutes.popularTags(limit: limit);
-    if (kDebugMode) {
-      debugPrint('TagsApi.fetchPopularTags -> GET $uri');
-    }
     final http.Response response = await http
         .get(
           uri,
@@ -26,12 +22,6 @@ class TagsApi {
           },
         )
         .timeout(kApiRequestTimeout);
-
-    if (kDebugMode) {
-      debugPrint(
-        'TagsApi.fetchPopularTags <- HTTP ${response.statusCode} $uri',
-      );
-    }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw HttpException('Popular tags request failed (HTTP ${response.statusCode}).');
@@ -69,21 +59,8 @@ class TagsApi {
         .toSet()
         .toList(growable: false);
 
-    if (kDebugMode) {
-      debugPrint(
-        'TagsApi.fetchPopularTags parsed ${normalized.length} tags '
-        '(reported count: ${reportedCount ?? 'n/a'}): $normalized',
-      );
-    }
-
     final int availableCount = reportedCount ?? normalized.length;
     if (availableCount < 10 || normalized.length < 10) {
-      if (kDebugMode) {
-        debugPrint(
-          'TagsApi.fetchPopularTags fallback -> not enough tags '
-          '(need at least 10, got count=$availableCount parsed=${normalized.length})',
-        );
-      }
       return const <String>[];
     }
 
