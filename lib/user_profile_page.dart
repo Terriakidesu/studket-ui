@@ -231,50 +231,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Notifications',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 10),
-                        if (_realtime.notifications.isEmpty)
-                          const Text(
-                            'No notifications yet. They will appear here after websocket bootstrap or realtime events.',
-                          )
-                        else
-                          ..._realtime.notifications.map((
-                            UserRealtimeNotification notification,
-                          ) {
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(notification.title),
-                                subtitle: Text(notification.body),
-                                trailing: notification.isRead
-                                    ? const Icon(Icons.done_all, size: 18)
-                                    : TextButton(
-                                        onPressed: () {
-                                          _realtime.markNotificationRead(
-                                            notification.notificationId,
-                                          );
-                                        },
-                                        child: const Text('Mark read'),
-                                      ),
-                              ),
-                            );
-                          }),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
                           'Conversations',
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(fontWeight: FontWeight.w700),

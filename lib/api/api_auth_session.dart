@@ -44,6 +44,8 @@ class ApiAuthSession {
   static String? get accountType => _accountType;
   static String? get marketplaceRole => _marketplaceRole;
   static bool get trustedSeller => _trustedSeller;
+  static String? get bearerToken => _bearerToken;
+  static String? get cookie => _cookie;
 
   static bool get isSeller => _marketplaceRole == 'seller';
 
@@ -72,6 +74,28 @@ class ApiAuthSession {
     _accountType = null;
     _marketplaceRole = null;
     _trustedSeller = false;
+  }
+
+  static void restore({
+    String? bearerToken,
+    String? cookie,
+    required int? accountId,
+    required String? email,
+    required String? username,
+    required String? accountType,
+    required String? marketplaceRole,
+    required bool trustedSeller,
+  }) {
+    setBearerToken(bearerToken);
+    _cookie = _normalize(cookie);
+    setAccount(
+      accountId: accountId,
+      email: email,
+      username: username,
+      accountType: accountType,
+      marketplaceRole: marketplaceRole,
+      trustedSeller: trustedSeller,
+    );
   }
 
   static String? _normalize(String? value) {

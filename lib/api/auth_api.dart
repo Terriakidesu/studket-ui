@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'api_auth_session.dart';
 import 'api_base_url.dart';
 import 'api_routes.dart';
+import 'api_session_storage.dart';
 
 class AuthApi {
   const AuthApi._();
@@ -29,6 +30,7 @@ class AuthApi {
     }
 
     _storeSessionFromAuthResponse(response);
+    await ApiSessionStorage.saveCurrentSession();
   }
 
   static Future<void> register({
@@ -59,6 +61,7 @@ class AuthApi {
     }
 
     _storeSessionFromAuthResponse(response);
+    await ApiSessionStorage.saveCurrentSession();
   }
 
   static Future<void> requestSellerStatus({String? submissionNote}) async {

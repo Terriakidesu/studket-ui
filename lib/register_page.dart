@@ -21,12 +21,18 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage> {
+  static const List<String> _campusOptions = <String>[
+    'Talisay',
+    'Alijis',
+    'Binalbagan',
+    'Fortune Town',
+  ];
+
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _firstNameController = TextEditingController();
   final TextEditingController _lastNameController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _campusController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
@@ -34,6 +40,7 @@ class _RegisterPageState extends State<RegisterPage> {
   bool _isSubmitting = false;
   bool _passwordVisible = false;
   bool _confirmPasswordVisible = false;
+  String? _selectedCampus;
 
   @override
   void dispose() {
@@ -41,7 +48,6 @@ class _RegisterPageState extends State<RegisterPage> {
     _lastNameController.dispose();
     _usernameController.dispose();
     _emailController.dispose();
-    _campusController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
@@ -98,7 +104,7 @@ class _RegisterPageState extends State<RegisterPage> {
         password: _passwordController.text,
         firstName: _firstNameController.text,
         lastName: _lastNameController.text,
-        campus: _campusController.text,
+        campus: _selectedCampus,
       );
 
       _showMessage('Registration successful.');
@@ -231,9 +237,22 @@ class _RegisterPageState extends State<RegisterPage> {
                               ),
                             ),
                             const SizedBox(height: 14),
-                            TextFormField(
-                              controller: _campusController,
-                              textInputAction: TextInputAction.next,
+                            DropdownButtonFormField<String>(
+                              initialValue: _selectedCampus,
+                              items: _campusOptions
+                                  .map(
+                                    (String campus) =>
+                                        DropdownMenuItem<String>(
+                                          value: campus,
+                                          child: Text(campus),
+                                        ),
+                                  )
+                                  .toList(growable: false),
+                              onChanged: (String? value) {
+                                setState(() {
+                                  _selectedCampus = value;
+                                });
+                              },
                               decoration: _fieldDecoration(
                                 label: 'Campus',
                                 prefixIcon: Icons.location_city_outlined,
