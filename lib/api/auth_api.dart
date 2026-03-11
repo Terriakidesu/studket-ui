@@ -32,28 +32,23 @@ class AuthApi {
   }
 
   static Future<void> register({
-    required String name,
+    required String username,
     required String email,
     required String password,
+    String? firstName,
+    String? lastName,
+    String? campus,
   }) async {
-    final List<String> parts = name
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((String part) => part.isNotEmpty)
-        .toList(growable: false);
-    final String firstName = parts.isEmpty ? '' : parts.first;
-    final String lastName = parts.length <= 1 ? '' : parts.skip(1).join(' ');
-
     final http.Response response = await _postJsonFollowRedirect(
       ApiRoutes.authRegister(),
       <String, dynamic>{
         'email': email.trim(),
-        'username': _buildUsername(name: name, email: email),
+        'username': username.trim(),
         'password': password,
         'account_type': 'user',
-        'first_name': firstName.isEmpty ? null : firstName,
-        'last_name': lastName.isEmpty ? null : lastName,
-        'campus': null,
+        'first_name': _nullableValue(firstName),
+        'last_name': _nullableValue(lastName),
+        'campus': _nullableValue(campus),
         'role_name': null,
         'superadmin_code': null,
       },
@@ -144,6 +139,8 @@ class AuthApi {
           account?['account_type'] ?? decoded['account_type'];
       final dynamic marketplaceRole =
           account?['marketplace_role'] ?? decoded['marketplace_role'];
+      final dynamic trustedSeller =
+          account?['trusted_seller'] ?? decoded['trusted_seller'];
 
       ApiAuthSession.setAccount(
         accountId: accountId is int ? accountId : int.tryParse('$accountId'),
@@ -151,6 +148,7 @@ class AuthApi {
         username: username?.toString(),
         accountType: accountType?.toString(),
         marketplaceRole: marketplaceRole?.toString(),
+        trustedSeller: trustedSeller == true,
       );
     } catch (_) {}
   }
@@ -181,24 +179,6 @@ class AuthApi {
     return response;
   }
 
-  static String _buildUsername({
-    required String name,
-    required String email,
-  }) {
-    final String fromName = name
-        .trim()
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-        .replaceAll(RegExp(r'_+'), '_')
-        .replaceAll(RegExp(r'^_|_$'), '');
-    if (fromName.isNotEmpty) {
-      return fromName;
-    }
-
-    final String localPart = email.split('@').first.trim().toLowerCase();
-    return localPart.isEmpty ? 'studket_user' : localPart;
-  }
-
   static String? _extractMessage(dynamic decoded) {
     if (decoded is String) {
       return decoded.trim();
@@ -222,5 +202,10 @@ class AuthApi {
     }
 
     return null;
+  }
+
+  static String? _nullableValue(String? value) {
+    final String normalized = (value ?? '').trim();
+    return normalized.isEmpty ? null : normalized;
   }
 }

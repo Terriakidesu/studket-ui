@@ -62,36 +62,6 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   int currentPageIndex = 0;
-  final TextEditingController _searchController = TextEditingController();
-  final List<String> _categories = const [
-    'Electronics',
-    'Home',
-    'Fashion',
-    'Sports',
-    'Books',
-    'Beauty',
-  ];
-  final Set<String> _selectedCategories = <String>{};
-
-  @override
-  void initState() {
-    super.initState();
-    _applyFilters();
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _refreshProducts() async {
-    _applyFilters();
-  }
-
-  void _applyFilters() {
-    setState(() {});
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -111,92 +81,73 @@ class _MyHomePageState extends State<MyHomePage> {
         child: currentPageIndex == 0
             ? Padding(
                 padding: const EdgeInsets.all(20),
-                child: Column(
+                child: ListView(
                   children: [
-                    Material(
-                      elevation: 2,
-                      borderRadius: BorderRadius.circular(16),
-                      color: Colors.white,
-                      child: TextField(
-                        controller: _searchController,
-                        textInputAction: TextInputAction.search,
-                        onSubmitted: (_) => _applyFilters(),
-                        decoration: InputDecoration(
-                          hintText: 'Search products',
-                          prefixIcon: const Icon(Icons.search),
-                          suffixIcon: IconButton(
-                            onPressed: _applyFilters,
-                            icon: const Icon(Icons.tune),
-                          ),
-                          filled: true,
-                          fillColor: Colors.white,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide.none,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      height: 40,
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: _categories.map((String category) {
-                            final bool isSelected = _selectedCategories.contains(
-                              category,
-                            );
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: FilterChip(
-                                label: Text(category),
-                                selected: isSelected,
-                                onSelected: (bool selected) {
-                                  setState(() {
-                                    if (selected) {
-                                      _selectedCategories.add(category);
-                                    } else {
-                                      _selectedCategories.remove(category);
-                                    }
-                                  });
-                                  _applyFilters();
-                                },
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'User API integration is currently limited to register, login, and seller verification request. The marketplace feed stays local until public listing endpoints exist.',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: RefreshIndicator(
-                        onRefresh: _refreshProducts,
-                        child: ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: const [
-                            SizedBox(height: 180),
-                            Center(
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 24),
-                                child: Text(
-                                  'No public listing feed is available for normal user accounts in the current backend. Sign in works, but marketplace inventory remains unavailable until user-facing listing endpoints exist.',
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Endpoint Overview',
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'This app is wired to the backend endpoints that are public for normal user accounts.',
                             ),
                           ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.login),
+                        title: const Text('POST /api/v1/auth/login'),
+                        subtitle: const Text(
+                          'Used by the sign-in screen for normal marketplace users.',
+                        ),
+                      ),
+                    ),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.app_registration),
+                        title: const Text('POST /api/v1/auth/register'),
+                        subtitle: const Text(
+                          'Used by the registration screen with explicit username, campus, first name, and last name fields.',
+                        ),
+                      ),
+                    ),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.verified_user_outlined),
+                        title: const Text(
+                          'POST /api/v1/auth/seller-status/request',
+                        ),
+                        subtitle: const Text(
+                          'Exposed in the profile screen as a trusted-seller request, not a seller-activation requirement.',
+                        ),
+                      ),
+                    ),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.wifi_tethering),
+                        title: const Text('WS /ws/users/{account_id}'),
+                        subtitle: const Text(
+                          'Exposed through the profile and chat screens for bootstrap, ping, subscribe, send message, and notification read actions.',
+                        ),
+                      ),
+                    ),
+                    Card(
+                      color: Colors.amber[50],
+                      child: const ListTile(
+                        leading: Icon(Icons.info_outline),
+                        title: Text('Not Public For User Accounts'),
+                        subtitle: Text(
+                          'Listings feed/search and CRUD resources remain management-only in the current backend reference.',
                         ),
                       ),
                     ),

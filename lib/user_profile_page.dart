@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'api/api_auth_session.dart';
 import 'api/auth_api.dart';
+import 'api/user_realtime_service.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
@@ -13,25 +14,14 @@ class UserProfilePage extends StatefulWidget {
   State<UserProfilePage> createState() => _UserProfilePageState();
 }
 
-enum _ProfileMode { seller, buyer }
-
 class _UserProfilePageState extends State<UserProfilePage> {
-  _ProfileMode _mode = ApiAuthSession.isSeller
-      ? _ProfileMode.seller
-      : _ProfileMode.buyer;
-  bool _isSubmittingSellerRequest = false;
+  final UserRealtimeService _realtime = UserRealtimeService.instance;
+  bool _isSubmittingTrustedSellerRequest = false;
 
-  bool get _isSellerAccount => ApiAuthSession.isSeller;
-
-  String get _displayName {
-    final String username = ApiAuthSession.username ?? 'studket_user';
-    return username.replaceAll('_', ' ');
-  }
-
-  String get _subtitle {
-    final String role = ApiAuthSession.marketplaceRole ?? 'buyer';
-    final String accountType = ApiAuthSession.accountType ?? 'user';
-    return '${_capitalize(role)} account • $accountType';
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_realtime.ensureConnected());
   }
 
   void _showMessage(String message) {
@@ -41,16 +31,16 @@ class _UserProfilePageState extends State<UserProfilePage> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _requestSellerAccess() async {
+  Future<void> _requestTrustedSeller() async {
     setState(() {
-      _isSubmittingSellerRequest = true;
+      _isSubmittingTrustedSellerRequest = true;
     });
 
     try {
       await AuthApi.requestSellerStatus(
         submissionNote: 'Requested from the Flutter marketplace app.',
       );
-      _showMessage('Seller access request submitted.');
+      _showMessage('Trusted seller verification request submitted.');
     } on TimeoutException {
       _showMessage('Request timed out. Please try again.');
     } on SocketException {
@@ -58,11 +48,11 @@ class _UserProfilePageState extends State<UserProfilePage> {
     } on HttpException catch (error) {
       _showMessage(error.message);
     } catch (_) {
-      _showMessage('Failed to submit seller request.');
+      _showMessage('Failed to submit trusted seller request.');
     } finally {
       if (mounted) {
         setState(() {
-          _isSubmittingSellerRequest = false;
+          _isSubmittingTrustedSellerRequest = false;
         });
       }
     }
@@ -70,165 +60,250 @@ class _UserProfilePageState extends State<UserProfilePage> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isSeller = _isSellerAccount && _mode == _ProfileMode.seller;
+    final String username = ApiAuthSession.username ?? 'studket_user';
+    final String marketplaceRole =
+        ApiAuthSession.marketplaceRole ?? 'buyer';
 
     return Scaffold(
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 34,
-                      backgroundImage: NetworkImage(
-                        'https://i.pravatar.cc/150?img=${((ApiAuthSession.accountId ?? 21) % 70) + 1}',
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _displayName,
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w700),
+        child: AnimatedBuilder(
+          animation: _realtime,
+          builder: (BuildContext context, _) {
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 34,
+                          backgroundImage: NetworkImage(
+                            'https://i.pravatar.cc/150?img=${((ApiAuthSession.accountId ?? 21) % 70) + 1}',
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _subtitle,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(color: Colors.grey[700]),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _StatChip(
-                                label: 'Account ID',
-                                value: '${ApiAuthSession.accountId ?? '-'}',
+                              Text(
+                                username,
+                                style: Theme.of(context).textTheme.titleLarge
+                                    ?.copyWith(fontWeight: FontWeight.w700),
                               ),
-                              const SizedBox(width: 8),
-                              _StatChip(
-                                label: 'Role',
-                                value: _capitalize(
-                                  ApiAuthSession.marketplaceRole ?? 'buyer',
-                                ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_capitalize(marketplaceRole)} account • ${ApiAuthSession.accountType ?? 'user'}',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: Colors.grey[700]),
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  _StatChip(
+                                    label: 'Account ID',
+                                    value: '${ApiAuthSession.accountId ?? '-'}',
+                                  ),
+                                  _StatChip(
+                                    label: 'Trusted',
+                                    value:
+                                        ApiAuthSession.trustedSeller
+                                            ? 'Yes'
+                                            : 'No',
+                                  ),
+                                  _StatChip(
+                                    label: 'Socket',
+                                    value: _realtime.isConnected
+                                        ? 'Live'
+                                        : 'Offline',
+                                  ),
+                                ],
                               ),
                             ],
                           ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (_isSellerAccount)
-              SegmentedButton<_ProfileMode>(
-                segments: const [
-                  ButtonSegment<_ProfileMode>(
-                    value: _ProfileMode.seller,
-                    icon: Icon(Icons.storefront_outlined),
-                    label: Text('Seller'),
-                  ),
-                  ButtonSegment<_ProfileMode>(
-                    value: _ProfileMode.buyer,
-                    icon: Icon(Icons.shopping_bag_outlined),
-                    label: Text('Buyer'),
-                  ),
-                ],
-                selected: {_mode},
-                onSelectionChanged: (Set<_ProfileMode> selection) {
-                  setState(() {
-                    _mode = selection.first;
-                  });
-                },
-              )
-            else
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Your backend currently exposes user auth and seller request endpoints. Submit a seller verification request here.',
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      FilledButton(
-                        onPressed: _isSubmittingSellerRequest
-                            ? null
-                            : _requestSellerAccess,
-                        child: _isSubmittingSellerRequest
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Request Seller'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            const SizedBox(height: 12),
-            Text(
-              isSeller ? 'Seller Access' : 'Buyer Access',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'The current backend reference only exposes user auth endpoints publicly. Marketplace feed, chat, and review APIs are management-only, so no listing or purchase data is rendered here.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
-            ),
-            const SizedBox(height: 10),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  isSeller
-                      ? 'Your account is marked as a seller in the current auth session.'
-                      : 'No public marketplace data is available for buyer accounts yet.',
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Card(
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.badge_outlined),
-                    title: Text(ApiAuthSession.email ?? 'No email in session'),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.person_outline),
-                    title: Text(ApiAuthSession.username ?? 'No username'),
-                  ),
-                  const Divider(height: 1),
-                  const ListTile(
-                    leading: Icon(Icons.info_outline),
-                    title: Text('User API integration active'),
-                    subtitle: Text(
-                      'Register, login, and seller verification request are wired to the backend.',
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          ],
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Public REST Endpoints',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Register and login are already active. Trusted seller request is available here.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed:
+                              _isSubmittingTrustedSellerRequest ||
+                                  ApiAuthSession.trustedSeller
+                              ? null
+                              : _requestTrustedSeller,
+                          child: _isSubmittingTrustedSellerRequest
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(
+                                  ApiAuthSession.trustedSeller
+                                      ? 'Trusted Seller Active'
+                                      : 'Request Trusted Seller',
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'User WebSocket',
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                            FilledButton.tonal(
+                              onPressed: _realtime.isConnecting
+                                  ? null
+                                  : _realtime.ensureConnected,
+                              child: const Text('Connect'),
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton.tonal(
+                              onPressed: _realtime.isConnected
+                                  ? _realtime.sendPing
+                                  : null,
+                              child: const Text('Ping'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _realtime.isConnected
+                              ? 'Connected to `/ws/users/${ApiAuthSession.accountId}`'
+                              : (_realtime.error ??
+                                    'Open a live user websocket to receive bootstrap conversations and notifications.'),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: Colors.grey[700]),
+                        ),
+                        if (_realtime.lastPongAt != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Last pong: ${_formatDateTime(_realtime.lastPongAt!)}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Notifications',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 10),
+                        if (_realtime.notifications.isEmpty)
+                          const Text(
+                            'No notifications yet. They will appear here after websocket bootstrap or realtime events.',
+                          )
+                        else
+                          ..._realtime.notifications.map((
+                            UserRealtimeNotification notification,
+                          ) {
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(notification.title),
+                                subtitle: Text(notification.body),
+                                trailing: notification.isRead
+                                    ? const Icon(Icons.done_all, size: 18)
+                                    : TextButton(
+                                        onPressed: () {
+                                          _realtime.markNotificationRead(
+                                            notification.notificationId,
+                                          );
+                                        },
+                                        child: const Text('Mark read'),
+                                      ),
+                              ),
+                            );
+                          }),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Conversations',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 10),
+                        if (_realtime.conversations.isEmpty)
+                          const Text(
+                            'No conversations yet. Bootstrap conversation summaries will appear here when the websocket connects.',
+                          )
+                        else
+                          ..._realtime.conversations.map((
+                            UserRealtimeConversation conversation,
+                          ) {
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(conversation.title),
+                              subtitle: Text(
+                                conversation.conversationType,
+                              ),
+                              trailing: const Icon(Icons.chat_bubble_outline),
+                            );
+                          }),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -237,6 +312,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
   String _capitalize(String value) {
     if (value.isEmpty) return value;
     return value[0].toUpperCase() + value.substring(1);
+  }
+
+  String _formatDateTime(DateTime value) {
+    final DateTime local = value.toLocal();
+    final String hour = local.hour.toString().padLeft(2, '0');
+    final String minute = local.minute.toString().padLeft(2, '0');
+    return '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')} $hour:$minute';
   }
 }
 

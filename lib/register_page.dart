@@ -22,8 +22,11 @@ class RegisterPage extends StatefulWidget {
 
 class _RegisterPageState extends State<RegisterPage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _firstNameController = TextEditingController();
+  final TextEditingController _lastNameController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _campusController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
@@ -34,8 +37,11 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _usernameController.dispose();
     _emailController.dispose();
+    _campusController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
@@ -53,6 +59,13 @@ class _RegisterPageState extends State<RegisterPage> {
     final String text = value ?? '';
     if (text.isEmpty) return 'Password is required.';
     if (text.length < 6) return 'Use at least 6 characters.';
+    return null;
+  }
+
+  String? _validateRequired(String? value, String field) {
+    if ((value ?? '').trim().isEmpty) {
+      return '$field is required.';
+    }
     return null;
   }
 
@@ -80,9 +93,12 @@ class _RegisterPageState extends State<RegisterPage> {
 
     try {
       await AuthApi.register(
-        name: _nameController.text,
+        username: _usernameController.text,
         email: _emailController.text,
         password: _passwordController.text,
+        firstName: _firstNameController.text,
+        lastName: _lastNameController.text,
+        campus: _campusController.text,
       );
 
       _showMessage('Registration successful.');
@@ -124,23 +140,22 @@ class _RegisterPageState extends State<RegisterPage> {
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.primary,
       body: LayoutBuilder(
-        builder: (context, constraints) {
+        builder: (BuildContext context, BoxConstraints constraints) {
           return SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Center(
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
-                    maxWidth: 420,
+                    maxWidth: 460,
                     maxHeight: constraints.maxHeight - 40,
                   ),
                   child: Card(
-                    child: Padding(
+                    child: SingleChildScrollView(
                       padding: const EdgeInsets.all(20),
                       child: Form(
                         key: _formKey,
                         child: Column(
-                          mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             Text(
@@ -156,19 +171,52 @@ class _RegisterPageState extends State<RegisterPage> {
                               style: Theme.of(context).textTheme.titleLarge
                                   ?.copyWith(fontWeight: FontWeight.w700),
                             ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Implements `POST /api/v1/auth/register` for marketplace user accounts.',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: Colors.grey[700]),
+                            ),
                             const SizedBox(height: 20),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _firstNameController,
+                                    textInputAction: TextInputAction.next,
+                                    validator: (String? value) =>
+                                        _validateRequired(value, 'First name'),
+                                    decoration: _fieldDecoration(
+                                      label: 'First name',
+                                      prefixIcon: Icons.person_outline,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _lastNameController,
+                                    textInputAction: TextInputAction.next,
+                                    validator: (String? value) =>
+                                        _validateRequired(value, 'Last name'),
+                                    decoration: _fieldDecoration(
+                                      label: 'Last name',
+                                      prefixIcon: Icons.person_outline,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
                             TextFormField(
-                              controller: _nameController,
+                              controller: _usernameController,
                               textInputAction: TextInputAction.next,
-                              validator: (value) {
-                                if ((value ?? '').trim().isEmpty) {
-                                  return 'Full name is required.';
-                                }
-                                return null;
-                              },
+                              validator: (String? value) =>
+                                  _validateRequired(value, 'Username'),
                               decoration: _fieldDecoration(
-                                label: 'Full name',
-                                prefixIcon: Icons.person_outline,
+                                label: 'Username',
+                                prefixIcon: Icons.alternate_email,
                               ),
                             ),
                             const SizedBox(height: 14),
@@ -180,6 +228,15 @@ class _RegisterPageState extends State<RegisterPage> {
                               decoration: _fieldDecoration(
                                 label: 'Email',
                                 prefixIcon: Icons.email_outlined,
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: _campusController,
+                              textInputAction: TextInputAction.next,
+                              decoration: _fieldDecoration(
+                                label: 'Campus',
+                                prefixIcon: Icons.location_city_outlined,
                               ),
                             ),
                             const SizedBox(height: 14),

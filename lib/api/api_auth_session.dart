@@ -8,6 +8,7 @@ class ApiAuthSession {
   static String? _username;
   static String? _accountType;
   static String? _marketplaceRole;
+  static bool _trustedSeller = false;
 
   static void setBearerToken(String? token) {
     final String normalized = (token ?? '').trim();
@@ -42,6 +43,7 @@ class ApiAuthSession {
   static String? get username => _username;
   static String? get accountType => _accountType;
   static String? get marketplaceRole => _marketplaceRole;
+  static bool get trustedSeller => _trustedSeller;
 
   static bool get isSeller => _marketplaceRole == 'seller';
 
@@ -51,12 +53,14 @@ class ApiAuthSession {
     required String? username,
     required String? accountType,
     required String? marketplaceRole,
+    required bool trustedSeller,
   }) {
     _accountId = accountId;
     _email = _normalize(email);
     _username = _normalize(username);
     _accountType = _normalize(accountType);
     _marketplaceRole = _normalize(marketplaceRole);
+    _trustedSeller = trustedSeller;
   }
 
   static void clear() {
@@ -67,6 +71,7 @@ class ApiAuthSession {
     _username = null;
     _accountType = null;
     _marketplaceRole = null;
+    _trustedSeller = false;
   }
 
   static String? _normalize(String? value) {
