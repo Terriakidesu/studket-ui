@@ -121,7 +121,7 @@ class ProfilePictureApi {
       return null;
     }
 
-    return endpoint.resolve(value).toString();
+    return normalizeApiAssetUrl(value);
   }
 
   static String _extractErrorMessage(http.Response response) {

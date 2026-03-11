@@ -27,6 +27,14 @@ class ApiRoutes {
     return _build(path: 'messages/');
   }
 
+  static Uri transactions() {
+    return _build(path: 'transactions/');
+  }
+
+  static Uri transactionQr() {
+    return _build(path: 'transaction-qr/');
+  }
+
   static Uri listings() {
     return _build(path: 'listings/');
   }
@@ -35,8 +43,27 @@ class ApiRoutes {
     return _build(path: 'listings/$listingId');
   }
 
+  static Uri listingInquiries(int listingId, {int? accountId}) {
+    return _build(
+      path: 'listings/$listingId/inquiries',
+      queryParameters: <String, dynamic>{
+        if (accountId != null) 'account_id': '$accountId',
+      },
+    );
+  }
+
   static Uri listingsForUser(int accountId) {
     return _build(path: 'listings/users/$accountId');
+  }
+
+  static Uri userInquiries(int accountId, {String? listingType}) {
+    return _build(
+      path: 'listings/users/$accountId/inquiries',
+      queryParameters: <String, dynamic>{
+        if (listingType != null && listingType.trim().isNotEmpty)
+          'listing_type': listingType,
+      },
+    );
   }
 
   static Uri lookingForListingsForUser(int accountId) {

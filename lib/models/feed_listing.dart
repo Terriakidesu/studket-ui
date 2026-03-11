@@ -136,24 +136,6 @@ class FeedListing {
   }
 
   static String? _normalizeImageUrl(String? raw) {
-    final String trimmed = (raw ?? '').trim();
-    if (trimmed.isEmpty) {
-      return null;
-    }
-    final Uri? parsed = Uri.tryParse(trimmed);
-    if (parsed != null && parsed.hasScheme) {
-      return parsed.toString();
-    }
-    if (trimmed.startsWith('//')) {
-      final Uri apiUri = Uri.parse(resolveApiBaseUrl());
-      return '${apiUri.scheme}:$trimmed';
-    }
-
-    final Uri rootUri = Uri.parse(resolveApiBaseUrl()).replace(
-      path: '/',
-      query: null,
-      fragment: null,
-    );
-    return rootUri.resolve(trimmed).toString();
+    return normalizeApiAssetUrl(raw);
   }
 }

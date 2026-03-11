@@ -849,84 +849,96 @@ class _SaleFeedCard extends StatelessWidget {
             ),
             Expanded(
               flex: 5,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      priceLabel,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            color: colorScheme.primary,
-                            fontWeight: FontWeight.w800,
-                          ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const Spacer(),
-                    Row(
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  final double height = constraints.maxHeight;
+                  final double padding = height < 88 ? 10 : 12;
+                  final double gap = height < 88 ? 3 : 4;
+                  final double iconSize = height < 88 ? 14 : 16;
+                  final int titleMaxLines = height < 88 ? 1 : 2;
+
+                  return Padding(
+                    padding: EdgeInsets.all(padding),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          Icons.location_on_outlined,
-                          size: 16,
-                          color: colorScheme.onSurfaceVariant,
+                        Text(
+                          priceLabel,
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                color: colorScheme.primary,
+                                fontWeight: FontWeight.w800,
+                              ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(width: 4),
+                        SizedBox(height: gap),
                         Expanded(
                           child: Text(
-                            campus,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
+                            title,
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
                                 ),
-                            maxLines: 1,
+                            maxLines: titleMaxLines,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.storefront_outlined,
-                          size: 16,
+                        SizedBox(height: gap),
+                        _CardMetaRow(
+                          icon: Icons.location_on_outlined,
+                          label: campus,
+                          iconSize: iconSize,
                           color: colorScheme.onSurfaceVariant,
                         ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            sellerName,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                        SizedBox(height: gap),
+                        _CardMetaRow(
+                          icon: Icons.storefront_outlined,
+                          label: sellerName,
+                          iconSize: iconSize,
+                          color: colorScheme.onSurfaceVariant,
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  );
+                },
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _CardMetaRow extends StatelessWidget {
+  const _CardMetaRow({
+    required this.icon,
+    required this.label,
+    required this.iconSize,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final double iconSize;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: iconSize, color: color),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: color,
+                ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 }
