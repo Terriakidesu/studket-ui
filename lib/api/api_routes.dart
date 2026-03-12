@@ -35,6 +35,14 @@ class ApiRoutes {
     return _build(path: 'transactions');
   }
 
+  static Uri transactionById(int transactionId) {
+    return _build(path: 'transactions/$transactionId');
+  }
+
+  static Uri cancelTransaction(int transactionId) {
+    return _build(path: 'transactions/$transactionId/cancel');
+  }
+
   static Uri transactionQr() {
     return _build(path: 'transaction-qr/');
   }
@@ -107,9 +115,11 @@ class ApiRoutes {
     int? userId,
     List<String> tags = const <String>[],
     int limit = 20,
+    int? offset,
   }) {
     final Map<String, dynamic> queryParameters = <String, dynamic>{
       'limit': '$limit',
+      if (offset != null) 'offset': '$offset',
       if (userId != null) 'user_id': '$userId',
       if (tags.isNotEmpty) 'tags': tags,
     };

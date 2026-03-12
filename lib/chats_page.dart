@@ -591,6 +591,12 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
 
   void _bindConversation(int conversationId, {bool sendInitialInquiry = false}) {
     _activeConversationId = conversationId;
+    _realtime.registerConversationMetadata(
+      conversationId: conversationId,
+      otherUsername: widget.sellerName,
+      otherAccountId: widget.sellerAccountId,
+      otherAccountType: widget.isStaffParticipant ? 'staff' : 'user',
+    );
     _realtime.openConversation(conversationId);
     unawaited(_realtime.subscribeConversation(conversationId));
     unawaited(_loadHistory(conversationId));
@@ -869,15 +875,30 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
 
     _hasSentInitialInquiry = true;
     for (final InquiryProductData product in widget.effectiveInquiryProducts) {
+      final String serialized = _serializeInquiryMessage(product);
       await _realtime.sendMessage(
         conversationId: conversationId,
-        messageText: _serializeInquiryMessage(product),
+        messageText: serialized,
+      );
+      _realtime.addLocalMessage(
+        conversationId: conversationId,
+        messageText: serialized,
+        otherUsername: widget.sellerName,
+        otherAccountId: widget.sellerAccountId,
+        otherAccountType: widget.isStaffParticipant ? 'staff' : 'user',
       );
     }
     if (widget.effectiveInquiryProducts.isEmpty && text.isNotEmpty) {
       await _realtime.sendMessage(
         conversationId: conversationId,
         messageText: text,
+      );
+      _realtime.addLocalMessage(
+        conversationId: conversationId,
+        messageText: text,
+        otherUsername: widget.sellerName,
+        otherAccountId: widget.sellerAccountId,
+        otherAccountType: widget.isStaffParticipant ? 'staff' : 'user',
       );
     }
   }
@@ -996,6 +1017,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   Future<void> _rejectInquiryOffer(InquiryProductData product) async {
     final int? sellerAccountId = ApiAuthSession.accountId;
     final int? inquiryId = _resolveInquiryIdForProduct(product);
+    final int? conversationId = _activeConversationId;
     if (sellerAccountId == null ||
         sellerAccountId <= 0 ||
         inquiryId == null ||
@@ -1008,8 +1030,21 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         listingId: product.listingId,
         inquiryId: inquiryId,
         accountId: sellerAccountId,
+        responseNote: 'Inquiry rejected by seller',
       );
-      final int? conversationId = _activeConversationId;
+      if (conversationId != null) {
+        final int? transactionId = _activeTransactionIdForProduct(
+          product: product,
+          timeline: _buildTimeline(conversationId),
+        );
+        if (transactionId != null && transactionId > 0) {
+          await _cancelTransaction(
+            transactionId: transactionId,
+            accountId: sellerAccountId,
+            reason: 'Inquiry rejected by seller',
+          );
+        }
+      }
       if (conversationId != null) {
         await _realtime.sendMessage(
           conversationId: conversationId,
@@ -1085,6 +1120,13 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     await _realtime.sendMessage(
       conversationId: conversationId,
       messageText: text,
+    );
+    _realtime.addLocalMessage(
+      conversationId: conversationId,
+      messageText: text,
+      otherUsername: widget.sellerName,
+      otherAccountId: widget.sellerAccountId,
+      otherAccountType: widget.isStaffParticipant ? 'staff' : 'user',
     );
     _messageController.clear();
     _scheduleScrollToBottom();
@@ -1180,6 +1222,14 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
               notification.relatedEntityId!,
         )
         .toSet();
+    final Set<int> rejectedListingIds = timeline
+        .where(
+          (_TimelineMessage message) => message.rejectedOfferProduct != null,
+        )
+        .map(
+          (_TimelineMessage message) => message.rejectedOfferProduct!.listingId,
+        )
+        .toSet();
     final Set<String> completedQrTokens = timeline
         .where(
           (_TimelineMessage message) => message.completedQrConfirmation != null,
@@ -1198,13 +1248,17 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
               _consumedQrTokens.contains(qrConfirmation.qrToken) ||
               completedQrTokens.contains(qrConfirmation.qrToken) ||
               completedTransactionIds.contains(qrConfirmation.transactionId);
-          if (!isCompleted) {
+          final bool isRejected = rejectedListingIds.contains(
+            qrConfirmation.product.listingId,
+          );
+          if (!isCompleted && !isRejected) {
             return message;
           }
           return message.copyWith(
             qrConfirmation: null,
-            completedQrConfirmation:
-                message.completedQrConfirmation ?? qrConfirmation,
+            completedQrConfirmation: isRejected
+                ? message.completedQrConfirmation
+                : message.completedQrConfirmation ?? qrConfirmation,
             text: '',
           );
         })
@@ -1218,6 +1272,41 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
               message.text.trim().isNotEmpty,
         )
         .toList(growable: false);
+  }
+
+  int? _activeTransactionIdForProduct({
+    required InquiryProductData product,
+    required List<_TimelineMessage> timeline,
+  }) {
+    final Set<int> completedTransactionIds = timeline
+        .where(
+          (_TimelineMessage message) => message.completedQrConfirmation != null,
+        )
+        .map(
+          (_TimelineMessage message) =>
+              message.completedQrConfirmation!.transactionId,
+        )
+        .toSet();
+
+    for (final _TimelineMessage message in timeline.reversed) {
+      if (message.rejectedOfferProduct?.listingId == product.listingId) {
+        return null;
+      }
+
+      final QrConfirmationData? qrConfirmation = message.qrConfirmation;
+      if (qrConfirmation == null) {
+        continue;
+      }
+      if (qrConfirmation.product.listingId != product.listingId) {
+        continue;
+      }
+      if (completedTransactionIds.contains(qrConfirmation.transactionId)) {
+        return null;
+      }
+      return qrConfirmation.transactionId;
+    }
+
+    return null;
   }
 
   _TimelineMessage? _currentInquiryFromTimeline(List<_TimelineMessage> timeline) {
@@ -1861,10 +1950,16 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         name: product.name.trim().isNotEmpty && product.name != 'Listing'
             ? product.name
             : candidate.name,
+        description: product.description.trim().isNotEmpty
+            ? product.description
+            : candidate.description,
         price: product.price.trim().isNotEmpty ? product.price : candidate.price,
         location: product.location.trim().isNotEmpty
             ? product.location
             : candidate.location,
+        listingType: product.listingType.trim().isNotEmpty
+            ? product.listingType
+            : candidate.listingType,
         imageUrl: product.imageUrl.trim().isNotEmpty
             ? product.imageUrl
             : candidate.imageUrl,
@@ -1896,6 +1991,13 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                 '')
             .toString()
             .trim();
+    final String description =
+        (productJson['description'] ??
+                productJson['details'] ??
+                productJson['body'] ??
+                '')
+            .toString()
+            .trim();
     final String price =
         (productJson['price'] ??
                 productJson['formatted_price'] ??
@@ -1908,6 +2010,10 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                 productJson['campus'] ??
                 productJson['pickup_location'] ??
                 '')
+            .toString()
+            .trim();
+    final String listingType =
+        (productJson['listing_type'] ?? json['listing_type'] ?? 'listing')
             .toString()
             .trim();
     final String imageUrl =
@@ -1925,8 +2031,10 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     return InquiryProductData(
       listingId: listingId,
       name: name.isEmpty ? 'Listing' : name,
+      description: description,
       price: price,
       location: location,
+      listingType: listingType,
       imageUrl: imageUrl,
     );
   }
@@ -2004,6 +2112,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     required int listingId,
     required int inquiryId,
     required int accountId,
+    String? responseNote,
   }) async {
     final http.Response response = await http
         .post(
@@ -2013,7 +2122,35 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
             'Content-Type': 'application/json',
             ...ApiAuthSession.authHeaders(),
           },
-          body: jsonEncode(<String, dynamic>{'account_id': accountId}),
+          body: jsonEncode(<String, dynamic>{
+            'account_id': accountId,
+            if (responseNote != null && responseNote.trim().isNotEmpty)
+              'response_note': responseNote.trim(),
+          }),
+        )
+        .timeout(kApiRequestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(_extractErrorMessage(response));
+    }
+  }
+
+  Future<void> _cancelTransaction({
+    required int transactionId,
+    required int accountId,
+    String? reason,
+  }) async {
+    final http.Response response = await http
+        .post(
+          ApiRoutes.cancelTransaction(transactionId),
+          headers: <String, String>{
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            ...ApiAuthSession.authHeaders(),
+          },
+          body: jsonEncode(<String, dynamic>{
+            'account_id': accountId,
+            if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+          }),
         )
         .timeout(kApiRequestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -2535,23 +2672,31 @@ class InquiryProductData {
   const InquiryProductData({
     required this.listingId,
     required this.name,
+    required this.description,
     required this.price,
     required this.location,
+    required this.listingType,
     required this.imageUrl,
   });
 
   final int listingId;
   final String name;
+  final String description;
   final String price;
   final String location;
+  final String listingType;
   final String imageUrl;
+
+  bool get isLookingFor => listingType.trim().toLowerCase() == 'looking_for';
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'listing_id': listingId,
       'name': name,
+      'description': description,
       'price': price,
       'location': location,
+      'listing_type': listingType,
       'image_url': imageUrl,
     };
   }
@@ -2560,8 +2705,10 @@ class InquiryProductData {
     return InquiryProductData(
       listingId: (json['listing_id'] as num?)?.toInt() ?? 0,
       name: (json['name'] ?? 'Listing').toString(),
+      description: (json['description'] ?? '').toString(),
       price: (json['price'] ?? '').toString(),
       location: (json['location'] ?? '').toString(),
+      listingType: (json['listing_type'] ?? 'listing').toString(),
       imageUrl: normalizeApiAssetUrl((json['image_url'] ?? '').toString()) ?? '',
     );
   }
@@ -2621,8 +2768,10 @@ class QrConfirmationData {
           : const InquiryProductData(
               listingId: 0,
               name: 'Listing',
+              description: '',
               price: '',
               location: '',
+              listingType: 'listing',
               imageUrl: '',
             ),
     );
@@ -2647,6 +2796,15 @@ class _InquiryMessageEmbed extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    if (product.isLookingFor) {
+      return _LookingForInquiryEmbed(
+        product: product,
+        isMine: isMine,
+        showResponseActions: showResponseActions,
+        onAccept: onAccept,
+        onReject: onReject,
+      );
+    }
     return Container(
       constraints: const BoxConstraints(maxWidth: 280),
       clipBehavior: Clip.antiAlias,
@@ -2738,6 +2896,113 @@ class _InquiryMessageEmbed extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LookingForInquiryEmbed extends StatelessWidget {
+  const _LookingForInquiryEmbed({
+    required this.product,
+    required this.isMine,
+    required this.showResponseActions,
+    this.onAccept,
+    this.onReject,
+  });
+
+  final InquiryProductData product;
+  final bool isMine;
+  final bool showResponseActions;
+  final VoidCallback? onAccept;
+  final VoidCallback? onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 320),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isMine
+            ? colorScheme.primaryContainer
+            : colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isMine
+              ? colorScheme.primary.withValues(alpha: 0.25)
+              : colorScheme.outlineVariant,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Looking for inquiry',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            product.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: colorScheme.onSurface,
+                ),
+          ),
+          if (product.description.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              product.description,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+            ),
+          ],
+          if (product.price.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              product.price,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ],
+          if (product.location.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              product.location,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ],
+          if (showResponseActions) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: onAccept,
+                  icon: const Icon(Icons.check_circle_outline, size: 18),
+                  label: const Text('Accept'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onReject,
+                  icon: const Icon(Icons.close, size: 18),
+                  label: const Text('Reject'),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -3056,30 +3321,32 @@ class _PinnedCurrentInquiry extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              width: 52,
-              height: 52,
-              child: product.imageUrl.trim().isNotEmpty
-                  ? Image.network(product.imageUrl, fit: BoxFit.cover)
-                  : Container(
-                      color: colorScheme.surfaceContainerHighest,
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.image_outlined,
-                        color: colorScheme.onSurfaceVariant,
+          if (!product.isLookingFor) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                width: 52,
+                height: 52,
+                child: product.imageUrl.trim().isNotEmpty
+                    ? Image.network(product.imageUrl, fit: BoxFit.cover)
+                    : Container(
+                        color: colorScheme.surfaceContainerHighest,
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.image_outlined,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
-                    ),
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
+            const SizedBox(width: 12),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Current inquiry',
+                  product.isLookingFor ? 'Current looking for inquiry' : 'Current inquiry',
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
@@ -3094,13 +3361,23 @@ class _PinnedCurrentInquiry extends StatelessWidget {
                       ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  product.price,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
+                if (product.isLookingFor && product.description.trim().isNotEmpty)
+                  Text(
+                    product.description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                  )
+                else
+                  Text(
+                    product.price,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
                 if (showResponseActions) ...[
                   const SizedBox(height: 8),
                   Wrap(

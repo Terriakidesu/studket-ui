@@ -29,10 +29,15 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  static const int _feedPageSize = 24;
+  static const double _feedPaginationTriggerOffset = 360;
+
   int currentPageIndex = 0;
   final UserRealtimeService _realtime = UserRealtimeService.instance;
   final TextEditingController _searchController = TextEditingController();
   final Set<String> _selectedTags = <String>{};
+  final ScrollController _saleFeedScrollController = ScrollController();
+  final ScrollController _lookingForScrollController = ScrollController();
 
   static const List<String> _fallbackFeedTags = <String>[
     'food',
@@ -48,6 +53,9 @@ class _MyHomePageState extends State<MyHomePage> {
   ];
 
   bool _isLoadingFeed = false;
+  bool _isLoadingMoreFeed = false;
+  bool _hasMoreFeed = true;
+  int _feedOffset = 0;
   List<String> _feedTags = _fallbackFeedTags;
   String? _feedError;
   List<FeedListing> _feedItems = const <FeedListing>[];
@@ -55,27 +63,47 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    _saleFeedScrollController.addListener(_handleFeedScroll);
+    _lookingForScrollController.addListener(_handleFeedScroll);
     unawaited(_realtime.ensureConnected());
     unawaited(_refreshFeedView());
   }
 
   @override
   void dispose() {
+    _saleFeedScrollController.removeListener(_handleFeedScroll);
+    _lookingForScrollController.removeListener(_handleFeedScroll);
+    _saleFeedScrollController.dispose();
+    _lookingForScrollController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _fetchFeed() async {
+  Future<void> _fetchFeed({bool reset = false}) async {
+    if (reset) {
+      if (_isLoadingFeed) {
+        return;
+      }
+    } else if (_isLoadingFeed || _isLoadingMoreFeed || !_hasMoreFeed) {
+      return;
+    }
+
     setState(() {
-      _isLoadingFeed = true;
-      _feedError = null;
+      if (reset) {
+        _isLoadingFeed = true;
+        _feedError = null;
+        _hasMoreFeed = true;
+      } else {
+        _isLoadingMoreFeed = true;
+      }
     });
 
     try {
       final Uri uri = ApiRoutes.listingsFeed(
         userId: ApiAuthSession.accountId,
         tags: _selectedTags.toList(growable: false),
-        limit: 50,
+        limit: _feedPageSize,
+        offset: reset ? 0 : _feedOffset,
       );
       final http.Response response = await http
           .get(
@@ -103,37 +131,64 @@ class _MyHomePageState extends State<MyHomePage> {
 
       if (!mounted) return;
       setState(() {
-        _feedItems = parsed;
+        if (reset) {
+          _feedItems = parsed;
+          _feedOffset = parsed.length;
+        } else {
+          final Set<int> existingIds = _feedItems
+              .map((FeedListing item) => item.id)
+              .toSet();
+          final List<FeedListing> nextItems = parsed
+              .where((FeedListing item) => !existingIds.contains(item.id))
+              .toList(growable: false);
+          _feedItems = <FeedListing>[..._feedItems, ...nextItems];
+          _feedOffset = _feedItems.length;
+        }
+        _hasMoreFeed = parsed.length >= _feedPageSize;
       });
     } on TimeoutException {
       if (!mounted) return;
       setState(() {
-        _feedError = 'Feed request timed out.';
+        if (reset || _feedItems.isEmpty) {
+          _feedError = 'Feed request timed out.';
+        }
       });
     } on SocketException {
       if (!mounted) return;
       setState(() {
-        _feedError = 'Could not connect to the listings feed.';
+        if (reset || _feedItems.isEmpty) {
+          _feedError = 'Could not connect to the listings feed.';
+        }
       });
     } on HttpException catch (error) {
       if (!mounted) return;
       setState(() {
-        _feedError = error.message;
+        if (reset || _feedItems.isEmpty) {
+          _feedError = error.message;
+        }
       });
     } on FormatException {
       if (!mounted) return;
       setState(() {
-        _feedError = 'Feed response format was invalid.';
+        if (reset || _feedItems.isEmpty) {
+          _feedError = 'Feed response format was invalid.';
+        }
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _feedError = 'Failed to load feed.';
+        if (reset || _feedItems.isEmpty) {
+          _feedError = 'Failed to load feed.';
+        }
       });
     } finally {
       if (mounted) {
         setState(() {
-          _isLoadingFeed = false;
+          if (reset) {
+            _isLoadingFeed = false;
+          } else {
+            _isLoadingMoreFeed = false;
+          }
         });
       }
     }
@@ -141,7 +196,24 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<void> _refreshFeedView() async {
     await _loadPopularTags();
-    await _fetchFeed();
+    await _fetchFeed(reset: true);
+  }
+
+  void _handleFeedScroll() {
+    if (_saleFeedScrollController.hasClients) {
+      final ScrollPosition position = _saleFeedScrollController.position;
+      if (position.pixels >=
+          position.maxScrollExtent - _feedPaginationTriggerOffset) {
+        unawaited(_fetchFeed());
+      }
+    }
+    if (_lookingForScrollController.hasClients) {
+      final ScrollPosition position = _lookingForScrollController.position;
+      if (position.pixels >=
+          position.maxScrollExtent - _feedPaginationTriggerOffset) {
+        unawaited(_fetchFeed());
+      }
+    }
   }
 
   Future<void> _loadPopularTags() async {
@@ -211,7 +283,7 @@ class _MyHomePageState extends State<MyHomePage> {
         _selectedTags.remove(tag);
       }
     });
-    unawaited(_fetchFeed());
+    unawaited(_refreshFeedView());
   }
 
   String _formatMoney(num? value) {
@@ -419,6 +491,7 @@ class _MyHomePageState extends State<MyHomePage> {
                             child: RefreshIndicator(
                               onRefresh: _refreshFeedView,
                               child: ListView(
+                                controller: _saleFeedScrollController,
                                 children: [
                                   TextField(
                                     controller: _searchController,
@@ -466,40 +539,29 @@ class _MyHomePageState extends State<MyHomePage> {
                                     ),
                                   ),
                                   const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          _selectedTags.isEmpty
-                                              ? 'Showing all feed tags'
-                                              : 'Filtering by: ${_selectedTags.join(', ')}',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.copyWith(
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurfaceVariant,
-                                              ),
-                                        ),
-                                      ),
-                                      FilledButton.tonal(
-                                        onPressed: _isLoadingFeed
-                                            ? null
-                                            : _refreshFeedView,
-                                        child: const Text('Reload'),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  if (_isLoadingFeed)
+                                  if (_selectedTags.isNotEmpty) ...[
+                                    Text(
+                                      'Filtering by: ${_selectedTags.join(', ')}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                  ],
+                                  if (_isLoadingFeed && _feedItems.isEmpty)
                                     const Padding(
                                       padding: EdgeInsets.only(top: 80),
                                       child: Center(
                                         child: CircularProgressIndicator(),
                                       ),
                                     )
-                                  else if (_feedError != null)
+                                  else if (_feedError != null &&
+                                      _feedItems.isEmpty)
                                     Card(
                                       color: Theme.of(context)
                                           .colorScheme
@@ -537,6 +599,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                     )
                                   else
                                     _buildSaleListingGrid(context),
+                                  _buildFeedPaginationFooter(),
                                 ],
                               ),
                             ),
@@ -546,6 +609,7 @@ class _MyHomePageState extends State<MyHomePage> {
                             child: RefreshIndicator(
                               onRefresh: _refreshFeedView,
                               child: ListView(
+                                controller: _lookingForScrollController,
                                 children: [
                                   Card(
                                     child: Padding(
@@ -574,14 +638,15 @@ class _MyHomePageState extends State<MyHomePage> {
                                     ),
                                   ),
                                   const SizedBox(height: 12),
-                                  if (_isLoadingFeed)
+                                  if (_isLoadingFeed && _feedItems.isEmpty)
                                     const Padding(
                                       padding: EdgeInsets.only(top: 80),
                                       child: Center(
                                         child: CircularProgressIndicator(),
                                       ),
                                     )
-                                  else if (_feedError != null)
+                                  else if (_feedError != null &&
+                                      _feedItems.isEmpty)
                                     Card(
                                       color: Theme.of(context)
                                           .colorScheme
@@ -606,6 +671,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                       (FeedListing item) =>
                                           _buildListingCard(context, item),
                                     ),
+                                  _buildFeedPaginationFooter(),
                                 ],
                               ),
                             ),
@@ -812,6 +878,22 @@ class _MyHomePageState extends State<MyHomePage> {
         );
       },
     );
+  }
+
+  Widget _buildFeedPaginationFooter() {
+    if (_isLoadingFeed && _feedItems.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    if (_isLoadingMoreFeed) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_feedItems.isNotEmpty && !_hasMoreFeed) {
+      return const SizedBox(height: 12);
+    }
+    return const SizedBox(height: 20);
   }
 }
 

@@ -760,6 +760,21 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       );
                     },
                   ),
+                  if (kDebugMode) ...<Widget>[
+                    const Divider(height: 24),
+                    _ActionRow(
+                      icon: Icons.developer_mode_outlined,
+                      label: 'Debug Settings',
+                      value: 'Development-only configuration',
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const DebugSettingsPage(),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                   const Divider(height: 24),
                   _ActionRow(
                     icon: Icons.logout_rounded,
@@ -1292,15 +1307,8 @@ class _ProfileListingCard extends StatelessWidget {
   }
 }
 
-class AccountSettingsPage extends StatefulWidget {
+class AccountSettingsPage extends StatelessWidget {
   const AccountSettingsPage({super.key});
-
-  @override
-  State<AccountSettingsPage> createState() => _AccountSettingsPageState();
-}
-
-class _AccountSettingsPageState extends State<AccountSettingsPage> {
-  String? _debugApiBaseUrlOverride = getDebugApiBaseUrlOverride();
 
   @override
   Widget build(BuildContext context) {
@@ -1371,15 +1379,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                     );
                   },
                 ),
-                if (kDebugMode) ...<Widget>[
-                  const Divider(height: 24),
-                  _ActionRow(
-                    icon: Icons.api_outlined,
-                    label: 'API Base URL',
-                    value: _debugApiBaseUrlOverride ?? 'Using build default',
-                    onTap: _editDebugApiBaseUrlOverride,
-                  ),
-                ],
               ],
             ),
           ),
@@ -1397,6 +1396,43 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       case ThemeMode.system:
         return 'Follow device';
     }
+  }
+}
+
+class DebugSettingsPage extends StatefulWidget {
+  const DebugSettingsPage({super.key});
+
+  @override
+  State<DebugSettingsPage> createState() => _DebugSettingsPageState();
+}
+
+class _DebugSettingsPageState extends State<DebugSettingsPage> {
+  String? _debugApiBaseUrlOverride = getDebugApiBaseUrlOverride();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(title: const Text('Debug Settings')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _DiscordSectionCard(
+            title: 'Networking',
+            child: Column(
+              children: [
+                _ActionRow(
+                  icon: Icons.api_outlined,
+                  label: 'API Base URL',
+                  value: _debugApiBaseUrlOverride ?? 'Using build default',
+                  onTap: _editDebugApiBaseUrlOverride,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _editDebugApiBaseUrlOverride() async {

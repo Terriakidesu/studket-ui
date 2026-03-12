@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'chats_page.dart';
 import 'seller_profile_page.dart';
 import 'network_cached_image.dart';
+import 'components/account_avatar.dart';
 import 'components/rating_stars.dart';
 import 'components/studket_app_bar.dart';
 import 'api/api_base_url.dart';
@@ -49,8 +50,6 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
   bool get _hasImages => widget.imageUrls.isNotEmpty;
   bool get _isLookingFor =>
       (widget.listingType ?? '').trim().toLowerCase() == 'looking_for';
-
-  bool get _hasSellerAvatar => widget.sellerAvatarUrl.trim().isNotEmpty;
 
   String? get _resolvedShareUrl {
     final String directUrl = (widget.shareUrl ?? '').trim();
@@ -140,17 +139,22 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
                 MaterialPageRoute(
                   builder: (_) => ChatThreadPage(
                     sellerName: widget.sellerName,
-                    lastMessage: 'Hi, is this still available?',
-                    initialMessageText:
-                        'Hi, is this still available for ${widget.productName}?',
+                    lastMessage: _isLookingFor
+                        ? 'Hi, I saw your looking for post.'
+                        : 'Hi, is this still available?',
+                    initialMessageText: _isLookingFor
+                        ? 'Hi, I saw your looking for post about ${widget.productName}. Can you share more details about what you need?'
+                        : 'Hi, is this still available for ${widget.productName}?',
                     sellerAccountId: widget.sellerAccountId,
                     sellerAvatarUrl: widget.sellerAvatarUrl,
                     inquiryProducts: <InquiryProductData>[
                       InquiryProductData(
                         listingId: widget.listingId,
                         name: widget.productName,
+                        description: widget.productDescription,
                         price: widget.productPrice,
                         location: widget.productLocation,
+                        listingType: widget.listingType ?? 'listing',
                         imageUrl: _hasImages ? widget.imageUrls.first : '',
                       ),
                     ],
@@ -298,14 +302,10 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
                         padding: const EdgeInsets.all(12),
                         child: Row(
                           children: [
-                            CircleAvatar(
+                            AccountAvatar(
+                              accountId: widget.sellerAccountId,
                               radius: 24,
-                              backgroundImage: _hasSellerAvatar
-                                  ? NetworkImage(widget.sellerAvatarUrl)
-                                  : null,
-                              child: _hasSellerAvatar
-                                  ? null
-                                  : const Icon(Icons.storefront_outlined),
+                              label: widget.sellerName,
                             ),
                             const SizedBox(width: 12),
                             Expanded(

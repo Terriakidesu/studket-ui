@@ -213,6 +213,8 @@ class UserRealtimeService extends ChangeNotifier {
   final Map<int, UserRealtimeTypingState> _typingStates =
       <int, UserRealtimeTypingState>{};
   final Set<int> _conversationsWithNewMessages = <int>{};
+  final Map<int, UserRealtimeConversation> _conversationMetadata =
+      <int, UserRealtimeConversation>{};
   int _messageSequence = 0;
   int? _activeConversationId;
 
@@ -252,6 +254,94 @@ class UserRealtimeService extends ChangeNotifier {
     if (_activeConversationId == conversationId) {
       _activeConversationId = null;
     }
+  }
+
+  void registerConversationMetadata({
+    required int conversationId,
+    required String otherUsername,
+    int? otherAccountId,
+    String otherAccountType = 'user',
+  }) {
+    if (conversationId <= 0) {
+      return;
+    }
+
+    final UserRealtimeConversation metadata = UserRealtimeConversation(
+      conversationId: conversationId,
+      conversationType: 'conversation',
+      otherAccountId: otherAccountId,
+      otherUsername: otherUsername.trim().isEmpty ? 'Conversation' : otherUsername.trim(),
+      otherAccountType: otherAccountType,
+      messageCount: _messages[conversationId]?.length ?? 0,
+      lastMessageText: _conversations
+          .cast<UserRealtimeConversation?>()
+          .firstWhere(
+            (UserRealtimeConversation? item) => item?.conversationId == conversationId,
+            orElse: () => null,
+          )
+          ?.lastMessageText,
+      lastMessageAt: _conversations
+          .cast<UserRealtimeConversation?>()
+          .firstWhere(
+            (UserRealtimeConversation? item) => item?.conversationId == conversationId,
+            orElse: () => null,
+          )
+          ?.lastMessageAt,
+    );
+
+    _conversationMetadata[conversationId] = metadata;
+    final int index = _conversations.indexWhere(
+      (UserRealtimeConversation item) => item.conversationId == conversationId,
+    );
+    if (index >= 0) {
+      final UserRealtimeConversation existing = _conversations[index];
+      final UserRealtimeConversation updated = UserRealtimeConversation(
+        conversationId: existing.conversationId,
+        conversationType: existing.conversationType,
+        otherAccountId: existing.otherAccountId ?? otherAccountId,
+        otherUsername: existing.otherUsername == 'Conversation'
+            ? metadata.otherUsername
+            : existing.otherUsername,
+        otherAccountType: existing.otherAccountType,
+        lastMessageText: existing.lastMessageText,
+        lastMessageAt: existing.lastMessageAt,
+        messageCount: existing.messageCount,
+      );
+      _conversations[index] = updated;
+      _conversations.sort(_compareConversationsByLatest);
+      notifyListeners();
+      return;
+    }
+
+    _conversations.insert(0, metadata);
+    notifyListeners();
+  }
+
+  void addLocalMessage({
+    required int conversationId,
+    required String messageText,
+    required String otherUsername,
+    int? otherAccountId,
+    String otherAccountType = 'user',
+  }) {
+    registerConversationMetadata(
+      conversationId: conversationId,
+      otherUsername: otherUsername,
+      otherAccountId: otherAccountId,
+      otherAccountType: otherAccountType,
+    );
+    _addMessage(
+      UserRealtimeMessage(
+        messageId: 0,
+        conversationId: conversationId,
+        senderId: ApiAuthSession.accountId,
+        senderUsername: ApiAuthSession.username ?? 'You',
+        messageText: messageText,
+        isRead: true,
+        sentAt: DateTime.now(),
+        receivedSequence: ++_messageSequence,
+      ),
+    );
   }
 
   Future<void> ensureConnected() async {
@@ -315,6 +405,7 @@ class UserRealtimeService extends ChangeNotifier {
       _messages.clear();
       _typingStates.clear();
       _conversationsWithNewMessages.clear();
+      _conversationMetadata.clear();
       _messageSequence = 0;
       _activeConversationId = null;
       _connectedAccountId = null;
@@ -465,6 +556,16 @@ class UserRealtimeService extends ChangeNotifier {
             .whereType<Map<String, dynamic>>()
             .map(UserRealtimeConversation.fromJson),
       );
+    _conversationMetadata
+      ..clear()
+      ..addEntries(
+        _conversations.map(
+          (UserRealtimeConversation item) => MapEntry<int, UserRealtimeConversation>(
+            item.conversationId,
+            item,
+          ),
+        ),
+      );
     _conversations.sort(_compareConversationsByLatest);
 
     _notifications
@@ -501,6 +602,32 @@ class UserRealtimeService extends ChangeNotifier {
       _conversations
         ..removeAt(conversationIndex)
         ..insert(0, updated);
+      _conversationMetadata[message.conversationId] = updated;
+    } else {
+      final UserRealtimeConversation metadata =
+          _conversationMetadata[message.conversationId] ??
+          UserRealtimeConversation(
+            conversationId: message.conversationId,
+            conversationType: 'conversation',
+            otherAccountId: message.isMine ? null : message.senderId,
+            otherUsername: message.isMine ? 'Conversation' : message.senderUsername,
+            otherAccountType: 'user',
+            lastMessageText: message.messageText,
+            lastMessageAt: message.sentAt,
+            messageCount: 1,
+          );
+      final UserRealtimeConversation inserted = UserRealtimeConversation(
+        conversationId: metadata.conversationId,
+        conversationType: metadata.conversationType,
+        otherAccountId: metadata.otherAccountId,
+        otherUsername: metadata.otherUsername,
+        otherAccountType: metadata.otherAccountType,
+        lastMessageText: message.messageText,
+        lastMessageAt: message.sentAt,
+        messageCount: metadata.messageCount + 1,
+      );
+      _conversations.insert(0, inserted);
+      _conversationMetadata[message.conversationId] = inserted;
     }
 
     if (!message.isMine && _activeConversationId != message.conversationId) {
