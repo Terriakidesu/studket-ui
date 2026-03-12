@@ -492,6 +492,7 @@ class _MyHomePageState extends State<MyHomePage> {
                               onRefresh: _refreshFeedView,
                               child: ListView(
                                 controller: _saleFeedScrollController,
+                                physics: const AlwaysScrollableScrollPhysics(),
                                 children: [
                                   TextField(
                                     controller: _searchController,
@@ -610,6 +611,7 @@ class _MyHomePageState extends State<MyHomePage> {
                               onRefresh: _refreshFeedView,
                               child: ListView(
                                 controller: _lookingForScrollController,
+                                physics: const AlwaysScrollableScrollPhysics(),
                                 children: [
                                   Card(
                                     child: Padding(
