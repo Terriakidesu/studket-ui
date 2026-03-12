@@ -31,10 +31,6 @@ class ApiRoutes {
     return _build(path: 'transactions/');
   }
 
-  static Uri transactionsNoSlash() {
-    return _build(path: 'transactions');
-  }
-
   static Uri transactionById(int transactionId) {
     return _build(path: 'transactions/$transactionId');
   }
