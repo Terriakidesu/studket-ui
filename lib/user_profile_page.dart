@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_cropper/image_cropper.dart';
@@ -1291,8 +1292,15 @@ class _ProfileListingCard extends StatelessWidget {
   }
 }
 
-class AccountSettingsPage extends StatelessWidget {
+class AccountSettingsPage extends StatefulWidget {
   const AccountSettingsPage({super.key});
+
+  @override
+  State<AccountSettingsPage> createState() => _AccountSettingsPageState();
+}
+
+class _AccountSettingsPageState extends State<AccountSettingsPage> {
+  String? _debugApiBaseUrlOverride = getDebugApiBaseUrlOverride();
 
   @override
   Widget build(BuildContext context) {
@@ -1363,6 +1371,15 @@ class AccountSettingsPage extends StatelessWidget {
                     );
                   },
                 ),
+                if (kDebugMode) ...<Widget>[
+                  const Divider(height: 24),
+                  _ActionRow(
+                    icon: Icons.api_outlined,
+                    label: 'API Base URL',
+                    value: _debugApiBaseUrlOverride ?? 'Using build default',
+                    onTap: _editDebugApiBaseUrlOverride,
+                  ),
+                ],
               ],
             ),
           ),
@@ -1380,6 +1397,164 @@ class AccountSettingsPage extends StatelessWidget {
       case ThemeMode.system:
         return 'Follow device';
     }
+  }
+
+  Future<void> _editDebugApiBaseUrlOverride() async {
+    final _DebugApiBaseUrlDialogResult? result =
+        await showDialog<_DebugApiBaseUrlDialogResult>(
+          context: context,
+          builder: (BuildContext context) {
+            return _DebugApiBaseUrlDialog(
+              initialValue: _debugApiBaseUrlOverride,
+            );
+          },
+        );
+
+    if (result == null) {
+      return;
+    }
+
+    try {
+      if (result.action == _DebugApiBaseUrlAction.reset) {
+        await setDebugApiBaseUrlOverride(null);
+      } else {
+        await setDebugApiBaseUrlOverride(result.value);
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _debugApiBaseUrlOverride = getDebugApiBaseUrlOverride();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _debugApiBaseUrlOverride == null
+                ? 'Using build default API URL.'
+                : 'Debug API URL updated.',
+          ),
+        ),
+      );
+    } on FormatException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+}
+
+enum _DebugApiBaseUrlAction { save, reset }
+
+class _DebugApiBaseUrlDialogResult {
+  const _DebugApiBaseUrlDialogResult({required this.action, this.value});
+
+  final _DebugApiBaseUrlAction action;
+  final String? value;
+}
+
+class _DebugApiBaseUrlDialog extends StatefulWidget {
+  const _DebugApiBaseUrlDialog({required this.initialValue});
+
+  final String? initialValue;
+
+  @override
+  State<_DebugApiBaseUrlDialog> createState() => _DebugApiBaseUrlDialogState();
+}
+
+class _DebugApiBaseUrlDialogState extends State<_DebugApiBaseUrlDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialValue ?? '',
+  );
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Debug API base URL'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: 'https://example.ngrok-free.dev/api/v1',
+              labelText: 'Base URL',
+              errorText: _errorText,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Leave blank to use the build default. If you enter only an origin, /api/v1 is added automatically.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.of(context).pop(
+              const _DebugApiBaseUrlDialogResult(
+                action: _DebugApiBaseUrlAction.reset,
+              ),
+            );
+          },
+          child: const Text('Reset'),
+        ),
+        TextButton(
+          onPressed: () {
+            Navigator.of(context).pop();
+          },
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+
+  void _save() {
+    final String value = _controller.text.trim();
+    if (value.isEmpty) {
+      Navigator.of(context).pop(
+        const _DebugApiBaseUrlDialogResult(
+          action: _DebugApiBaseUrlAction.reset,
+        ),
+      );
+      return;
+    }
+
+    final Uri? parsed = Uri.tryParse(value);
+    if (parsed == null ||
+        !parsed.hasScheme ||
+        parsed.host.trim().isEmpty ||
+        (parsed.scheme != 'http' && parsed.scheme != 'https')) {
+      setState(() {
+        _errorText = 'Enter a full http:// or https:// URL.';
+      });
+      return;
+    }
+
+    Navigator.of(context).pop(
+      _DebugApiBaseUrlDialogResult(
+        action: _DebugApiBaseUrlAction.save,
+        value: value,
+      ),
+    );
   }
 }
 
