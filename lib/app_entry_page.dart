@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'app_notifications.dart';
 import 'api/api_session_storage.dart';
 import 'authentication_page.dart';
 import 'home_page.dart';
@@ -32,6 +33,11 @@ class _AppEntryPageState extends State<AppEntryPage> {
       _isAuthenticated = restored;
       _isRestoringSession = false;
     });
+    if (restored) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(AppNotifications.instance.handlePendingNavigation());
+      });
+    }
   }
 
   @override
@@ -53,6 +59,9 @@ class _AppEntryPageState extends State<AppEntryPage> {
         }
         setState(() {
           _isAuthenticated = true;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(AppNotifications.instance.handlePendingNavigation());
         });
       },
     );

@@ -265,6 +265,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
           buyerAccountId: inquiry.buyerAccountId,
           isMine: inquiry.isMine,
           status: inquiry.status,
+          offeredPrice: inquiry.offeredPrice,
         );
       });
     } catch (_) {}
@@ -390,6 +391,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
           body: jsonEncode(<String, dynamic>{
             'account_id': currentAccountId,
             if (messageText.isNotEmpty) 'message_text': messageText,
+            if (product.offeredPrice != null) 'offered_price': product.offeredPrice,
           }),
         )
         .timeout(kApiRequestTimeout);
@@ -591,6 +593,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
               buyerAccountId: resolvedInquiry.buyerAccountId,
               isMine: resolvedInquiry.isMine,
               status: 'accepted',
+              offeredPrice: resolvedInquiry.offeredPrice,
             );
           }
         });
@@ -684,6 +687,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                 buyerAccountId: resolvedInquiry.buyerAccountId,
                 isMine: resolvedInquiry.isMine,
                 status: 'rejected',
+                offeredPrice: resolvedInquiry.offeredPrice,
               );
             }
           });
@@ -1539,6 +1543,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         buyerAccountId: buyerAccountId,
         isMine: buyerAccountId != null && buyerAccountId == ApiAuthSession.accountId,
         status: (decoded['status'] ?? 'pending').toString().trim().toLowerCase(),
+        offeredPrice: (decoded['offered_price'] as num?)?.toDouble(),
       );
     }
 
@@ -1798,7 +1803,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
       'buyer_id': participantIds.buyerId,
       'seller_id': participantIds.sellerId,
       'quantity': 1,
-      'agreed_price': _parsePriceValue(product.price),
+      'agreed_price': _resolveAgreedPriceValue(product),
       'transaction_status': 'pending',
       'completed_at': null,
     };
@@ -1982,9 +1987,49 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     return null;
   }
 
-  double _parsePriceValue(String rawPrice) {
-    final String normalized = rawPrice.replaceAll(RegExp(r'[^0-9.]'), '');
-    return double.tryParse(normalized) ?? 0;
+  double _resolveAgreedPriceValue(InquiryProductData product) {
+    if (product.isLookingFor) {
+      final _ResolvedInquiryPreview? resolvedInquiry = _resolvedInquiry;
+      final double? offeredPrice = resolvedInquiry?.product.listingId == product.listingId
+          ? resolvedInquiry?.offeredPrice
+          : null;
+      if (offeredPrice == null || offeredPrice <= 0) {
+        throw const HttpException(
+          'Looking-for transactions require an accepted inquiry with an offered_price; arbitrary agreed_price is not allowed',
+        );
+      }
+      return offeredPrice;
+    }
+
+    final String rawPrice = product.price.trim();
+    final Iterable<RegExpMatch> matches = RegExp(
+      r'\d+(?:,\d{3})*(?:\.\d+)?',
+    ).allMatches(rawPrice);
+    final List<double> values = matches
+        .map(
+          (RegExpMatch match) =>
+              double.tryParse(match.group(0)!.replaceAll(',', '')),
+        )
+        .whereType<double>()
+        .toList(growable: false);
+
+    if (values.isEmpty) {
+      throw const HttpException('Could not determine a valid agreed price.');
+    }
+
+    if (values.length > 1) {
+      throw HttpException(
+        product.isLookingFor
+            ? 'This looking-for listing shows a budget range, not a single agreed price.'
+            : 'Could not determine a single agreed price from the listing amount.',
+      );
+    }
+
+    if (values.single <= 0) {
+      throw const HttpException('agreed_price must be greater than 0');
+    }
+
+    return values.single;
   }
 
   bool _currentUserCanCancelTransaction(InquiryProductData product) {
@@ -2317,6 +2362,7 @@ class InquiryProductData {
     required this.location,
     required this.listingType,
     required this.imageUrl,
+    this.offeredPrice,
   });
 
   final int listingId;
@@ -2326,6 +2372,7 @@ class InquiryProductData {
   final String location;
   final String listingType;
   final String imageUrl;
+  final double? offeredPrice;
 
   bool get isLookingFor => listingType.trim().toLowerCase() == 'looking_for';
 
@@ -2338,6 +2385,7 @@ class InquiryProductData {
       'location': location,
       'listing_type': listingType,
       'image_url': imageUrl,
+      'offered_price': offeredPrice,
     };
   }
 
@@ -2350,6 +2398,7 @@ class InquiryProductData {
       location: (json['location'] ?? '').toString(),
       listingType: (json['listing_type'] ?? 'listing').toString(),
       imageUrl: normalizeApiAssetUrl((json['image_url'] ?? '').toString()) ?? '',
+      offeredPrice: (json['offered_price'] as num?)?.toDouble(),
     );
   }
 }
@@ -2361,6 +2410,7 @@ class _ResolvedInquiryPreview {
     required this.buyerAccountId,
     required this.isMine,
     required this.status,
+    required this.offeredPrice,
   });
 
   final int inquiryId;
@@ -2368,6 +2418,7 @@ class _ResolvedInquiryPreview {
   final int? buyerAccountId;
   final bool isMine;
   final String status;
+  final double? offeredPrice;
 }
 
 class _TransactionParticipantIds {

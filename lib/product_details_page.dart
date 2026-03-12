@@ -86,6 +86,52 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
     );
   }
 
+  Future<double?> _promptOfferPrice() async {
+    final TextEditingController controller = TextEditingController();
+    final double? result = await showDialog<double>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Enter your offer'),
+          content: TextField(
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Offer price',
+              hintText: 'e.g. 250',
+              prefixText: 'PHP ',
+            ),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final String raw = controller.text.trim().replaceAll(',', '');
+                final double? value = double.tryParse(raw);
+                if (value == null || value <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Enter a valid offer price greater than 0.'),
+                    ),
+                  );
+                  return;
+                }
+                Navigator.of(context).pop(value);
+              },
+              child: const Text('Continue'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -124,7 +170,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
                 borderRadius: BorderRadius.circular(14),
               ),
             ),
-            onPressed: () {
+            onPressed: () async {
               if (widget.sellerAccountId == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -135,7 +181,17 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
                 );
                 return;
               }
-              Navigator.of(context).push(
+              final NavigatorState navigator = Navigator.of(context);
+              final double? offeredPrice = _isLookingFor
+                  ? await _promptOfferPrice()
+                  : null;
+              if (_isLookingFor && offeredPrice == null) {
+                return;
+              }
+              if (!mounted) {
+                return;
+              }
+              navigator.push(
                 MaterialPageRoute(
                   builder: (_) => ChatThreadPage(
                     sellerName: widget.sellerName,
@@ -156,6 +212,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
                         location: widget.productLocation,
                         listingType: widget.listingType ?? 'listing',
                         imageUrl: _hasImages ? widget.imageUrls.first : '',
+                        offeredPrice: offeredPrice,
                       ),
                     ],
                   ),

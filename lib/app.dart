@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_entry_page.dart';
+import 'app_navigation.dart';
 import 'app_theme_controller.dart';
 
 class MyApp extends StatelessWidget {
@@ -139,6 +140,7 @@ class MyApp extends StatelessWidget {
       builder: (BuildContext context, _) {
         return MaterialApp(
           title: 'Studket',
+          navigatorKey: appNavigatorKey,
           theme: _buildTheme(Brightness.light),
           darkTheme: _buildTheme(Brightness.dark),
           themeMode: AppThemeController.instance.themeMode,

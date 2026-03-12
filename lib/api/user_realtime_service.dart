@@ -526,8 +526,11 @@ class UserRealtimeService extends ChangeNotifier {
           if (!notification.isRead && !_isMessageNotification(notification)) {
             AppNotifications.instance.showRealtimeNotification(
               notificationId: notification.notificationId,
+              notificationType: notification.notificationType,
               title: notification.title,
               body: notification.body,
+              relatedEntityType: notification.relatedEntityType,
+              relatedEntityId: notification.relatedEntityId,
             );
           }
           notifyListeners();
@@ -586,7 +589,32 @@ class UserRealtimeService extends ChangeNotifier {
           message.conversationId,
           () => <UserRealtimeMessage>[],
         );
-    items.add(message);
+    final int existingIndex = message.messageId > 0
+        ? items.indexWhere(
+            (UserRealtimeMessage item) => item.messageId == message.messageId,
+          )
+        : -1;
+    if (existingIndex >= 0) {
+      items[existingIndex] = message;
+      notifyListeners();
+      return;
+    }
+
+    final int optimisticIndex = message.messageId > 0
+        ? items.indexWhere(
+            (UserRealtimeMessage item) =>
+                item.messageId == 0 &&
+                item.senderId == message.senderId &&
+                item.messageText == message.messageText &&
+                _isPotentialOptimisticMatch(item.sentAt, message.sentAt),
+          )
+        : -1;
+    final bool isReplacingOptimistic = optimisticIndex >= 0;
+    if (isReplacingOptimistic) {
+      items[optimisticIndex] = message;
+    } else {
+      items.add(message);
+    }
 
     final int conversationIndex = _conversations.indexWhere(
       (UserRealtimeConversation item) =>
@@ -597,7 +625,9 @@ class UserRealtimeService extends ChangeNotifier {
           .copyWith(
             lastMessageText: message.messageText,
             lastMessageAt: message.sentAt,
-            messageCount: _conversations[conversationIndex].messageCount + 1,
+            messageCount: isReplacingOptimistic
+                ? _conversations[conversationIndex].messageCount
+                : _conversations[conversationIndex].messageCount + 1,
           );
       _conversations
         ..removeAt(conversationIndex)
@@ -624,7 +654,9 @@ class UserRealtimeService extends ChangeNotifier {
         otherAccountType: metadata.otherAccountType,
         lastMessageText: message.messageText,
         lastMessageAt: message.sentAt,
-        messageCount: metadata.messageCount + 1,
+        messageCount: isReplacingOptimistic
+            ? metadata.messageCount
+            : metadata.messageCount + 1,
       );
       _conversations.insert(0, inserted);
       _conversationMetadata[message.conversationId] = inserted;
@@ -635,6 +667,18 @@ class UserRealtimeService extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  bool _isPotentialOptimisticMatch(
+    DateTime? existingSentAt,
+    DateTime? incomingSentAt,
+  ) {
+    if (existingSentAt == null || incomingSentAt == null) {
+      return true;
+    }
+    final int difference = existingSentAt.difference(incomingSentAt).inSeconds
+        .abs();
+    return difference <= 10;
   }
 
   void _updateNotification(UserRealtimeNotification notification) {
