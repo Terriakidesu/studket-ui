@@ -10,6 +10,7 @@ import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
 import 'api/api_routes.dart';
 import 'api/user_realtime_service.dart';
+import 'chat_message_text.dart';
 import 'components/account_avatar.dart';
 import 'components/studket_app_bar.dart';
 import 'seller_profile_page.dart';
@@ -309,17 +310,7 @@ class _ChatsPageState extends State<ChatsPage> {
   }
 
   String _previewTextForMessage(String messageText) {
-    final InquiryProductData? inquiryProduct =
-        _ChatThreadPageState._parseInquiryMessage(messageText);
-    if (inquiryProduct != null) {
-      return 'Inquiry: ${inquiryProduct.name}';
-    }
-    final QrConfirmationData? qrConfirmation =
-        _ChatThreadPageState._parseQrConfirmationStartedMessage(messageText);
-    if (qrConfirmation != null) {
-      return 'QR confirmation: ${qrConfirmation.product.name}';
-    }
-    return messageText.trim();
+    return formatChatMessagePreview(messageText);
   }
 
   String _formatConversationType(String conversationType) {
@@ -888,7 +879,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         otherAccountType: widget.isStaffParticipant ? 'staff' : 'user',
       );
     }
-    if (widget.effectiveInquiryProducts.isEmpty && text.isNotEmpty) {
+    if (text.isNotEmpty) {
       await _realtime.sendMessage(
         conversationId: conversationId,
         messageText: text,

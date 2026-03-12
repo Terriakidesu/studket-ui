@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 
 import 'api/api_base_url.dart';
+import 'chat_message_text.dart';
 
 class AppNotifications {
   AppNotifications._();
@@ -115,7 +116,7 @@ class AppNotifications {
     await _plugin.show(
       100000 + conversationId,
       senderName,
-      messageText,
+      formatChatMessagePreview(messageText),
       NotificationDetails(
         android: AndroidNotificationDetails(
           _messagesChannelId,
@@ -128,12 +129,12 @@ class AppNotifications {
             me,
             conversationTitle: senderName,
             groupConversation: false,
-            messages: <Message>[
-              Message(
-                messageText,
-                DateTime.now(),
-                senderPerson,
-              ),
+              messages: <Message>[
+                Message(
+                  formatChatMessagePreview(messageText),
+                  DateTime.now(),
+                  senderPerson,
+                ),
             ],
           ),
         ),
