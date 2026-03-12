@@ -265,7 +265,6 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
           buyerAccountId: inquiry.buyerAccountId,
           isMine: inquiry.isMine,
           status: inquiry.status,
-          offeredPrice: inquiry.offeredPrice,
         );
       });
     } catch (_) {}
@@ -391,7 +390,6 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
           body: jsonEncode(<String, dynamic>{
             'account_id': currentAccountId,
             if (messageText.isNotEmpty) 'message_text': messageText,
-            if (product.offeredPrice != null) 'offered_price': product.offeredPrice,
           }),
         )
         .timeout(kApiRequestTimeout);
@@ -593,13 +591,9 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
               buyerAccountId: resolvedInquiry.buyerAccountId,
               isMine: resolvedInquiry.isMine,
               status: 'accepted',
-              offeredPrice: resolvedInquiry.offeredPrice,
             );
           }
         });
-      }
-      if (mounted) {
-        _showQrConfirmationDialog(qrConfirmation, isMine: true);
       }
       _scheduleScrollToBottom();
     } on TimeoutException {
@@ -687,7 +681,6 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                 buyerAccountId: resolvedInquiry.buyerAccountId,
                 isMine: resolvedInquiry.isMine,
                 status: 'rejected',
-                offeredPrice: resolvedInquiry.offeredPrice,
               );
             }
           });
@@ -1543,7 +1536,6 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
         buyerAccountId: buyerAccountId,
         isMine: buyerAccountId != null && buyerAccountId == ApiAuthSession.accountId,
         status: (decoded['status'] ?? 'pending').toString().trim().toLowerCase(),
-        offeredPrice: (decoded['offered_price'] as num?)?.toDouble(),
       );
     }
 
@@ -1988,19 +1980,6 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   }
 
   double _resolveAgreedPriceValue(InquiryProductData product) {
-    if (product.isLookingFor) {
-      final _ResolvedInquiryPreview? resolvedInquiry = _resolvedInquiry;
-      final double? offeredPrice = resolvedInquiry?.product.listingId == product.listingId
-          ? resolvedInquiry?.offeredPrice
-          : null;
-      if (offeredPrice == null || offeredPrice <= 0) {
-        throw const HttpException(
-          'Looking-for transactions require an accepted inquiry with an offered_price; arbitrary agreed_price is not allowed',
-        );
-      }
-      return offeredPrice;
-    }
-
     final String rawPrice = product.price.trim();
     final Iterable<RegExpMatch> matches = RegExp(
       r'\d+(?:,\d{3})*(?:\.\d+)?',
@@ -2018,10 +1997,11 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     }
 
     if (values.length > 1) {
-      throw HttpException(
-        product.isLookingFor
-            ? 'This looking-for listing shows a budget range, not a single agreed price.'
-            : 'Could not determine a single agreed price from the listing amount.',
+      if (product.isLookingFor) {
+        return values.first;
+      }
+      throw const HttpException(
+        'Could not determine a single agreed price from the listing amount.',
       );
     }
 
@@ -2071,7 +2051,10 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    isMine ? 'QR confirmation started' : 'Scan seller QR',
+                    _qrDialogTitle(
+                      qrConfirmation: qrConfirmation,
+                      isMine: isMine,
+                    ),
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 16),
@@ -2131,9 +2114,10 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                   Text(qrConfirmation.product.name),
                   const SizedBox(height: 8),
                   Text(
-                    isMine
-                        ? 'Token: ${qrConfirmation.qrToken}'
-                        : 'Scan the seller QR to confirm this transaction.',
+                    _qrDialogDescription(
+                      qrConfirmation: qrConfirmation,
+                      isMine: isMine,
+                    ),
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           fontFamily: isMine ? 'monospace' : null,
                           fontWeight: isMine ? FontWeight.w700 : FontWeight.w400,
@@ -2175,6 +2159,30 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     final String minute = local.minute.toString().padLeft(2, '0');
     final String period = local.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $period';
+  }
+
+  String _qrDialogTitle({
+    required QrConfirmationData qrConfirmation,
+    required bool isMine,
+  }) {
+    if (qrConfirmation.product.isLookingFor) {
+      return isMine ? 'Requester QR ready' : 'Scan requester QR';
+    }
+    return isMine ? 'QR confirmation started' : 'Scan seller QR';
+  }
+
+  String _qrDialogDescription({
+    required QrConfirmationData qrConfirmation,
+    required bool isMine,
+  }) {
+    if (qrConfirmation.product.isLookingFor) {
+      return isMine
+          ? 'Token: ${qrConfirmation.qrToken}'
+          : 'Scan the requester QR to confirm this transaction.';
+    }
+    return isMine
+        ? 'Token: ${qrConfirmation.qrToken}'
+        : 'Scan the seller QR to confirm this transaction.';
   }
 
   Future<void> _confirmScannedQr({
@@ -2362,7 +2370,6 @@ class InquiryProductData {
     required this.location,
     required this.listingType,
     required this.imageUrl,
-    this.offeredPrice,
   });
 
   final int listingId;
@@ -2372,7 +2379,6 @@ class InquiryProductData {
   final String location;
   final String listingType;
   final String imageUrl;
-  final double? offeredPrice;
 
   bool get isLookingFor => listingType.trim().toLowerCase() == 'looking_for';
 
@@ -2385,7 +2391,6 @@ class InquiryProductData {
       'location': location,
       'listing_type': listingType,
       'image_url': imageUrl,
-      'offered_price': offeredPrice,
     };
   }
 
@@ -2398,7 +2403,6 @@ class InquiryProductData {
       location: (json['location'] ?? '').toString(),
       listingType: (json['listing_type'] ?? 'listing').toString(),
       imageUrl: normalizeApiAssetUrl((json['image_url'] ?? '').toString()) ?? '',
-      offeredPrice: (json['offered_price'] as num?)?.toDouble(),
     );
   }
 }
@@ -2410,7 +2414,6 @@ class _ResolvedInquiryPreview {
     required this.buyerAccountId,
     required this.isMine,
     required this.status,
-    required this.offeredPrice,
   });
 
   final int inquiryId;
@@ -2418,7 +2421,6 @@ class _ResolvedInquiryPreview {
   final int? buyerAccountId;
   final bool isMine;
   final String status;
-  final double? offeredPrice;
 }
 
 class _TransactionParticipantIds {
@@ -2932,9 +2934,7 @@ class _QrConfirmationStartedEmbed extends StatelessWidget {
                 ],
                 const SizedBox(height: 8),
                 Text(
-                  isMine
-                      ? 'Show this QR to the buyer or tap to enlarge'
-                      : 'Tap to scan the seller QR',
+                  _hintText(),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
@@ -2945,6 +2945,17 @@ class _QrConfirmationStartedEmbed extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _hintText() {
+    if (qrConfirmation.product.isLookingFor) {
+      return isMine
+          ? 'Show this QR to the offerer or tap to enlarge'
+          : 'Tap to scan the requester QR';
+    }
+    return isMine
+        ? 'Show this QR to the buyer or tap to enlarge'
+        : 'Tap to scan the seller QR';
   }
 }
 
