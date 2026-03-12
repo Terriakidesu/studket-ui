@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 const Duration kApiRequestTimeout = Duration(seconds: 10);
+const Duration kApiUploadTimeout = Duration(seconds: 60);
 
 String resolveApiBaseUrl({String apiPath = 'api/v1'}) {
   final String debugOverride = const String.fromEnvironment(

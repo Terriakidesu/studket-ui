@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 import 'api/listings_api.dart';
 import 'api/tags_api.dart';
@@ -36,6 +37,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
   final TextEditingController _budgetMaxController = TextEditingController();
   final TextEditingController _customTagController = TextEditingController();
   final List<File> _mediaFiles = <File>[];
+  final List<File> _temporaryMediaFiles = <File>[];
 
   static const List<String> _conditions = <String>[
     'new',
@@ -69,6 +71,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
   bool _useBudgetRange = false;
   bool _isSubmitting = false;
   bool _isDeleting = false;
+  bool _isPreparingMedia = false;
   String? _submitError;
 
   bool get _isLookingForMode => widget.isLookingFor;
@@ -83,6 +86,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
 
   @override
   void dispose() {
+    _deleteTemporaryMediaFiles();
     _titleController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
@@ -278,6 +282,10 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
   }
 
   Future<void> _pickMedia() async {
+    if (_isPreparingMedia || _isSubmitting) {
+      return;
+    }
+
     final FilePickerResult? result = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       type: FileType.image,
@@ -295,10 +303,106 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
     }
 
     setState(() {
-      _mediaFiles
-        ..clear()
-        ..addAll(selected);
+      _isPreparingMedia = true;
+      _submitError = null;
     });
+
+    try {
+      final List<File> preparedFiles = await _prepareMediaFiles(selected);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deleteTemporaryMediaFiles();
+        _temporaryMediaFiles.addAll(
+          preparedFiles.where(
+            (File file) => !selected.any((File original) => original.path == file.path),
+          ),
+        );
+        _mediaFiles
+          ..clear()
+          ..addAll(preparedFiles);
+      });
+    } catch (_) {
+      _setSubmitError('Failed to prepare photos for upload.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPreparingMedia = false;
+        });
+      }
+    }
+  }
+
+  Future<List<File>> _prepareMediaFiles(List<File> selected) async {
+    final List<File> prepared = <File>[];
+    for (int index = 0; index < selected.length; index++) {
+      prepared.add(await _compressMediaFile(selected[index], index));
+    }
+    return prepared;
+  }
+
+  Future<File> _compressMediaFile(File source, int index) async {
+    final String extension = source.path.split('.').last.toLowerCase();
+    if (!<String>{'jpg', 'jpeg', 'png', 'webp'}.contains(extension)) {
+      return source;
+    }
+
+    final String targetPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}studket_listing_${DateTime.now().microsecondsSinceEpoch}_$index.jpg';
+
+    final XFile? compressed = await FlutterImageCompress.compressAndGetFile(
+      source.path,
+      targetPath,
+      format: CompressFormat.jpeg,
+      quality: 72,
+      minWidth: 1600,
+      minHeight: 1600,
+      keepExif: true,
+    );
+
+    if (compressed == null) {
+      return source;
+    }
+
+    final File compressedFile = File(compressed.path);
+    final int sourceLength = await source.length();
+    final int compressedLength = await compressedFile.length();
+    if (compressedLength >= sourceLength) {
+      if (await compressedFile.exists()) {
+        await compressedFile.delete();
+      }
+      return source;
+    }
+
+    return compressedFile;
+  }
+
+  void _deleteTemporaryMediaFiles() {
+    for (final File file in _temporaryMediaFiles) {
+      try {
+        if (file.existsSync()) {
+          file.deleteSync();
+        }
+      } catch (_) {}
+    }
+    _temporaryMediaFiles.clear();
+  }
+
+  String _mediaSummaryLabel() {
+    if (_mediaFiles.isEmpty) {
+      return 'No photos selected';
+    }
+
+    final int totalBytes = _mediaFiles.fold<int>(
+      0,
+      (int sum, File file) => sum + file.lengthSync(),
+    );
+    final double totalMb = totalBytes / (1024 * 1024);
+    final String sizeLabel = totalMb >= 1
+        ? '${totalMb.toStringAsFixed(1)} MB'
+        : '${(totalBytes / 1024).toStringAsFixed(0)} KB';
+    return '${_mediaFiles.length} photo${_mediaFiles.length == 1 ? '' : 's'} selected - $sizeLabel';
   }
 
   Future<void> _loadPopularTags() async {
@@ -847,7 +951,7 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                 const SizedBox(height: 16),
                 _SectionCard(
                   title: 'Photos',
-                  subtitle: 'Pick sharp images. Upload starts after the listing record is created.',
+                  subtitle: 'Pick sharp images. Photos are compressed before upload starts.',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -879,16 +983,18 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    _mediaFiles.isEmpty
-                                        ? 'No photos selected'
-                                        : '${_mediaFiles.length} photo${_mediaFiles.length == 1 ? '' : 's'} selected',
+                                    _isPreparingMedia
+                                        ? 'Preparing photos...'
+                                        : _mediaSummaryLabel(),
                                     style: theme.textTheme.titleSmall?.copyWith(
                                       fontWeight: FontWeight.w800,
                                     ),
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    'Use bright images and keep the main item centered.',
+                                    _isPreparingMedia
+                                        ? 'Compressing selected files before sending them to the backend.'
+                                        : 'Use bright images and keep the main item centered.',
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: colorScheme.onSurfaceVariant,
                                     ),
@@ -898,7 +1004,9 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                             ),
                             const SizedBox(width: 12),
                             FilledButton.tonalIcon(
-                              onPressed: _isSubmitting ? null : _pickMedia,
+                              onPressed: _isSubmitting || _isPreparingMedia
+                                  ? null
+                                  : _pickMedia,
                               icon: const Icon(Icons.add_photo_alternate_outlined),
                               label: Text(_mediaFiles.isEmpty ? 'Add' : 'Edit'),
                             ),
@@ -950,9 +1058,23 @@ class _ListingEditorPageState extends State<ListingEditorPage> {
                                       onTap: _isSubmitting
                                           ? null
                                           : () {
+                                              final File removed = _mediaFiles[index];
+                                              final bool isTemporary = _temporaryMediaFiles.any(
+                                                (File file) => file.path == removed.path,
+                                              );
                                               setState(() {
                                                 _mediaFiles.removeAt(index);
+                                                _temporaryMediaFiles.removeWhere(
+                                                  (File file) => file.path == removed.path,
+                                                );
                                               });
+                                              if (isTemporary) {
+                                                try {
+                                                  if (removed.existsSync()) {
+                                                    removed.deleteSync();
+                                                  }
+                                                } catch (_) {}
+                                              }
                                             },
                                       child: Padding(
                                         padding: EdgeInsets.all(4),

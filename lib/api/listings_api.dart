@@ -176,24 +176,28 @@ class ListingsApi {
     required int listingId,
     required List<File> files,
   }) async {
-    for (int index = 0; index < files.length; index++) {
-      final File file = files[index];
-      final http.MultipartRequest request = http.MultipartRequest(
-        'POST',
-        ApiRoutes.listingMediaUpload(),
-      );
-      request.headers.addAll(ApiAuthSession.authHeaders());
-      request.fields['listing_id'] = '$listingId';
-      request.fields['sort_order'] = '$index';
-      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    if (files.isEmpty) {
+      return;
+    }
 
-      final http.StreamedResponse streamed = await request.send().timeout(
-        kApiRequestTimeout,
-      );
-      final http.Response response = await http.Response.fromStream(streamed);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException(_extractErrorMessage(response));
-      }
+    final http.MultipartRequest request = http.MultipartRequest(
+      'POST',
+      ApiRoutes.listingMediaUpload(),
+    );
+    request.headers.addAll(ApiAuthSession.authHeaders());
+    request.fields['listing_id'] = '$listingId';
+    request.fields['sort_order'] = '0';
+
+    for (final File file in files) {
+      request.files.add(await http.MultipartFile.fromPath('files', file.path));
+    }
+
+    final http.StreamedResponse streamed = await request.send().timeout(
+      kApiUploadTimeout,
+    );
+    final http.Response response = await http.Response.fromStream(streamed);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(_extractErrorMessage(response));
     }
   }
 
