@@ -585,6 +585,8 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
                     formVersion: _reviewFormVersion,
                     isSubmitting: _isSubmittingReview,
                     hasExistingReview: _hasCurrentUserReview,
+                    showRatingSummary: ApiAuthSession.isSeller,
+                    averageRating: _derivedRating,
                     onEditReview: _editReview,
                     onRatingChanged: (value) {
                       setState(() {
@@ -679,6 +681,8 @@ class _SellerReviewsTab extends StatelessWidget {
     required this.formVersion,
     required this.isSubmitting,
     required this.hasExistingReview,
+    required this.showRatingSummary,
+    required this.averageRating,
     required this.onEditReview,
     required this.onRatingChanged,
     required this.onCommentChanged,
@@ -695,6 +699,8 @@ class _SellerReviewsTab extends StatelessWidget {
   final int formVersion;
   final bool isSubmitting;
   final bool hasExistingReview;
+  final bool showRatingSummary;
+  final double? averageRating;
   final ValueChanged<_SellerReview> onEditReview;
   final ValueChanged<int> onRatingChanged;
   final ValueChanged<String> onCommentChanged;
@@ -717,6 +723,12 @@ class _SellerReviewsTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
+        if (showRatingSummary)
+          _SellerRatingSummary(
+            averageRating: averageRating,
+            reviewCount: reviews.length,
+          ),
+        if (showRatingSummary) const SizedBox(height: 16),
         if (!hasExistingReview)
           _SellerReviewForm(
             rating: rating,
@@ -767,6 +779,56 @@ class _SellerReviewsTab extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _SellerRatingSummary extends StatelessWidget {
+  const _SellerRatingSummary({
+    required this.averageRating,
+    required this.reviewCount,
+  });
+
+  final double? averageRating;
+  final int reviewCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final double displayRating = averageRating ?? 0;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.star_rounded,
+            color: colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            displayRating.toStringAsFixed(1),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '($reviewCount reviews)',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -18,8 +18,10 @@ import 'api/api_session_storage.dart';
 import 'api/auth_api.dart';
 import 'api/user_realtime_service.dart';
 import 'components/account_avatar.dart';
+import 'components/rating_stars.dart';
 import 'listing_editor_page.dart';
 import 'network_cached_image.dart';
+import 'seller_profile_page.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
@@ -39,12 +41,17 @@ class _UserProfilePageState extends State<UserProfilePage> {
   String? _myPostsError;
   List<_ProfileListing> _activeListings = const <_ProfileListing>[];
   List<_ProfileListing> _lookingForPosts = const <_ProfileListing>[];
+  bool _isLoadingSellerRating = false;
+  String? _sellerRatingError;
+  double? _sellerAverageRating;
+  int _sellerReviewCount = 0;
 
   @override
   void initState() {
     super.initState();
     if (ApiAuthSession.isSeller) {
       unawaited(_loadMyPosts());
+      unawaited(_loadSellerRating());
     }
   }
 
@@ -329,6 +336,82 @@ class _UserProfilePageState extends State<UserProfilePage> {
         });
       }
     }
+  }
+
+  Future<void> _loadSellerRating() async {
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingSellerRating = true;
+      _sellerRatingError = null;
+    });
+
+    try {
+      final http.Response response = await http
+          .get(
+            ApiRoutes.reviewsForUser(accountId),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractPostsError(response));
+      }
+
+      final List<int> ratings = _parseSellerRatings(response.body);
+      if (!mounted) {
+        return;
+      }
+      if (ratings.isEmpty) {
+        setState(() {
+          _sellerAverageRating = null;
+          _sellerReviewCount = 0;
+        });
+        return;
+      }
+      final int total = ratings.fold<int>(0, (sum, value) => sum + value);
+      setState(() {
+        _sellerReviewCount = ratings.length;
+        _sellerAverageRating = total / ratings.length;
+      });
+    } on TimeoutException {
+      _sellerRatingError = 'Ratings request timed out.';
+    } on SocketException {
+      _sellerRatingError = 'Could not connect to the reviews API.';
+    } on HttpException catch (error) {
+      _sellerRatingError = error.message;
+    } on FormatException {
+      _sellerRatingError = 'Ratings response format was invalid.';
+    } catch (_) {
+      _sellerRatingError = 'Failed to load seller ratings.';
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingSellerRating = false;
+        });
+      }
+    }
+  }
+
+  List<int> _parseSellerRatings(String body) {
+    final dynamic decoded = jsonDecode(body);
+    final List<dynamic> items = decoded is List
+        ? decoded
+        : decoded is Map<String, dynamic>
+            ? (decoded['items'] as List<dynamic>? ?? const <dynamic>[])
+            : const <dynamic>[];
+
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map((item) => (item['rating'] as num?)?.toInt() ?? 0)
+        .where((value) => value > 0)
+        .toList(growable: false);
   }
 
   void _setMyPostsError(String message) {
@@ -620,6 +703,47 @@ class _UserProfilePageState extends State<UserProfilePage> {
                           ),
                         ],
                       ),
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerLow,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: theme.colorScheme.outlineVariant),
+                      ),
+                      child: _isLoadingSellerRating
+                          ? const Center(child: CircularProgressIndicator())
+                          : _sellerRatingError != null
+                              ? Text(
+                                  _sellerRatingError!,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.error,
+                                  ),
+                                )
+                              : _sellerReviewCount == 0
+                                  ? Text(
+                                      'No seller reviews yet.',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                    )
+                                  : Row(
+                                      children: [
+                                        RatingStars(
+                                          rating: _sellerAverageRating ?? 0,
+                                          showValue: true,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          '($_sellerReviewCount)',
+                                          style: theme.textTheme.bodySmall?.copyWith(
+                                            color: theme.colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
@@ -1075,7 +1199,7 @@ class _PostsGroup extends StatelessWidget {
   final VoidCallback onTap;
   final ValueChanged<_ProfileListing> onEdit;
 
-  static const int _previewCount = 3;
+  static const int _previewCount = 1;
 
   @override
   Widget build(BuildContext context) {
@@ -1241,81 +1365,124 @@ class _ProfileListingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final ColorScheme colorScheme = theme.colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLowest,
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colorScheme.outlineVariant),
+        side: BorderSide(color: colorScheme.outlineVariant),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  item.title,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: colorScheme.onSurface,
-                    ),
-                ),
-              ),
-              const SizedBox(width: 8),
-                       _DiscordTag(
-                         label: item.status,
-                         backgroundColor: colorScheme.surfaceContainerHighest,
-                         foregroundColor: colorScheme.onSurfaceVariant,
-                       ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        tooltip: 'Edit post',
-                        onPressed: () {
-                          onEdit(item);
-                        },
-                        icon: const Icon(Icons.edit_outlined, size: 20),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.title,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatListingAmount(item),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ],
                   ),
-          const SizedBox(height: 6),
-          Text(
-            _formatListingAmount(item),
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: colorScheme.primary,
-              fontWeight: FontWeight.w700,
+                ),
+                Chip(
+                  label: Text(item.status),
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Edit post',
+                  onPressed: () {
+                    onEdit(item);
+                  },
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                ),
+              ],
             ),
-          ),
-          if (item.description.trim().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
-              item.description,
+              item.description.trim().isEmpty
+                  ? 'No description provided.'
+                  : item.description,
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
             ),
-          ],
-          if (item.tags.isNotEmpty) ...[
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: item.tags
-                  .map(
-                    (String tag) => _DiscordTag(
-                      label: tag,
-                      backgroundColor: colorScheme.secondaryContainer,
-                      foregroundColor: colorScheme.onSecondaryContainer,
+              children: [
+                _ProfileMetaPill(
+                  icon: Icons.category_outlined,
+                  label: item.listingType,
+                ),
+                if ((item.condition ?? '').trim().isNotEmpty)
+                  _ProfileMetaPill(
+                    icon: Icons.fact_check_outlined,
+                    label: item.condition!,
+                  ),
+                if (item.tags.isNotEmpty)
+                  ...item.tags.map(
+                    (String tag) => Chip(
+                      label: Text(tag),
+                      visualDensity: VisualDensity.compact,
                     ),
-                  )
-                  .toList(growable: false),
+                  ),
+              ],
             ),
           ],
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileMetaPill extends StatelessWidget {
+  const _ProfileMetaPill({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    return Chip(
+      avatar: Icon(
+        icon,
+        size: 16,
+        color: colorScheme.onSurfaceVariant,
+      ),
+      label: Text(label),
+      visualDensity: VisualDensity.compact,
+      backgroundColor: colorScheme.surfaceContainerHighest,
+      labelStyle: theme.textTheme.labelSmall?.copyWith(
+        color: colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w600,
       ),
     );
   }
@@ -2277,26 +2444,12 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
             const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _TransactionDetailSection(
-                title: 'Buyer',
-                rows: [
-                  _DetailRow('Username', _details!.buyerUsername),
-                  _DetailRow('Email', _details!.buyerEmail),
-                  _DetailRow('Campus', _details!.buyerCampus),
-                ],
-              ),
+              child: _TransactionSummaryCard(details: _details!),
             ),
             const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _TransactionDetailSection(
-                title: 'Seller',
-                rows: [
-                  _DetailRow('Username', _details!.sellerUsername),
-                  _DetailRow('Email', _details!.sellerEmail),
-                  _DetailRow('Campus', _details!.sellerCampus),
-                ],
-              ),
+              child: _SellerProfileCard(details: _details!),
             ),
             const SizedBox(height: 16),
             if (_details!.role.trim().toLowerCase() != 'seller')
@@ -2492,46 +2645,6 @@ class _TransactionDetailHeaderState extends State<_TransactionDetailHeader> {
   }
 }
 
-class _TransactionDetailSection extends StatelessWidget {
-  const _TransactionDetailSection({
-    required this.title,
-    required this.rows,
-  });
-
-  final String title;
-  final List<_DetailRow> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    final ColorScheme colorScheme = theme.colorScheme;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 10),
-          ...rows.map((row) => row),
-        ],
-      ),
-    );
-  }
-}
-
 class _DetailRow extends StatelessWidget {
   const _DetailRow(this.label, this.value);
 
@@ -2590,6 +2703,342 @@ class _DetailChip extends StatelessWidget {
         style: theme.textTheme.labelMedium?.copyWith(
           color: colorScheme.onSurfaceVariant,
           fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _TransactionSummaryCard extends StatelessWidget {
+  const _TransactionSummaryCard({required this.details});
+
+  final _TransactionDetails details;
+
+  String _formatPrice(double value) {
+    return value % 1 == 0
+        ? 'PHP ${value.toStringAsFixed(0)}'
+        : 'PHP ${value.toStringAsFixed(2)}';
+  }
+
+  String _formatDate(DateTime? value) {
+    if (value == null) {
+      return 'Not available';
+    }
+    final DateTime local = value.toLocal();
+    final String date =
+        '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+    final String time =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return '$date • $time';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final bool isBuyer =
+        details.role.trim().toLowerCase() == 'buyer';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Transaction Summary',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _InfoRow(label: 'Status', value: details.transactionStatus),
+          _InfoRow(label: 'Role', value: isBuyer ? 'Buyer' : 'Seller'),
+          _InfoRow(label: 'Quantity', value: '${details.quantity}'),
+          _InfoRow(label: 'Agreed Price', value: _formatPrice(details.agreedPrice)),
+          _InfoRow(label: 'Completed', value: _formatDate(details.completedAt)),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SellerProfileCard extends StatefulWidget {
+  const _SellerProfileCard({required this.details});
+
+  final _TransactionDetails details;
+
+  @override
+  State<_SellerProfileCard> createState() => _SellerProfileCardState();
+}
+
+class _SellerProfileCardState extends State<_SellerProfileCard> {
+  bool _isLoadingRating = false;
+  double? _averageRating;
+  int _reviewCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSellerRating();
+  }
+
+  Future<void> _loadSellerRating() async {
+    final int sellerId = widget.details.sellerAccountId;
+    if (sellerId <= 0 || _isLoadingRating) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingRating = true;
+    });
+
+    try {
+      final http.Response response = await http
+          .get(
+            ApiRoutes.reviewsForUser(sellerId),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+
+      final List<int> ratings = _parseRatings(response.body);
+      if (!mounted) {
+        return;
+      }
+      if (ratings.isEmpty) {
+        setState(() {
+          _averageRating = null;
+          _reviewCount = 0;
+        });
+        return;
+      }
+      final int total = ratings.fold<int>(0, (sum, value) => sum + value);
+      setState(() {
+        _reviewCount = ratings.length;
+        _averageRating = total / ratings.length;
+      });
+    } catch (_) {
+      // Ignore rating failures for card rendering.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingRating = false;
+        });
+      }
+    }
+  }
+
+  List<int> _parseRatings(String body) {
+    final dynamic decoded = jsonDecode(body);
+    final List<dynamic> items = decoded is List
+        ? decoded
+        : decoded is Map<String, dynamic>
+            ? (decoded['items'] as List<dynamic>? ?? const <dynamic>[])
+            : const <dynamic>[];
+
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map((item) => (item['rating'] as num?)?.toInt() ?? 0)
+        .where((value) => value > 0)
+        .toList(growable: false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final bool userIsSeller = ApiAuthSession.isSeller;
+    final bool showBuyer = userIsSeller;
+    final int accountId =
+        showBuyer ? widget.details.buyerAccountId : widget.details.sellerAccountId;
+    final String displayName =
+        showBuyer ? widget.details.buyerUsername : widget.details.sellerUsername;
+    final String displayEmail =
+        showBuyer ? widget.details.buyerEmail : widget.details.sellerEmail;
+    final String displayCampus =
+        showBuyer ? widget.details.buyerCampus : widget.details.sellerCampus;
+    final bool canTap = userIsSeller && accountId > 0;
+    final String roleLabel = showBuyer ? 'Buyer' : 'Seller';
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: !canTap
+            ? null
+            : () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SellerProfilePage(
+                      sellerName: displayName,
+                      sellerAvatarUrl: '',
+                      sellerRating: 0,
+                      sellerAccountId: accountId,
+                    ),
+                  ),
+                );
+              },
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              AccountAvatar(
+                accountId: accountId,
+                radius: 24,
+                label: displayName,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    if (_isLoadingRating)
+                      SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colorScheme.primary,
+                        ),
+                      )
+                    else if (_reviewCount == 0)
+                      Text(
+                        'No ratings yet',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      )
+                    else
+                      Row(
+                        children: [
+                          RatingStars(
+                            rating: _averageRating ?? 0,
+                            showValue: true,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '($_reviewCount)',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: showBuyer
+                            ? colorScheme.tertiaryContainer
+                            : colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        roleLabel,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: showBuyer
+                              ? colorScheme.onTertiaryContainer
+                              : colorScheme.onPrimaryContainer,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (displayEmail.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        displayEmail,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    if (displayCampus.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        displayCampus,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (canTap)
+                Icon(
+                  Icons.chevron_right,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -2667,6 +3116,7 @@ class _TransactionDetails {
     required this.listingType,
     required this.listingTitle,
     required this.sellerAccountId,
+    required this.buyerAccountId,
     required this.buyerUsername,
     required this.buyerEmail,
     required this.buyerCampus,
@@ -2685,6 +3135,7 @@ class _TransactionDetails {
   final String listingType;
   final String listingTitle;
   final int sellerAccountId;
+  final int buyerAccountId;
   final String buyerUsername;
   final String buyerEmail;
   final String buyerCampus;
@@ -2719,6 +3170,9 @@ class _TransactionDetails {
       sellerAccountId: (json['seller_account_id'] as num?)?.toInt() ??
           (json['listing_seller_id'] as num?)?.toInt() ??
           (json['seller_id'] as num?)?.toInt() ??
+          0,
+      buyerAccountId: (json['buyer_account_id'] as num?)?.toInt() ??
+          (json['buyer_id'] as num?)?.toInt() ??
           0,
       buyerUsername: (json['buyer_username'] as String?)?.trim().isNotEmpty ==
               true

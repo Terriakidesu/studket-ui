@@ -6,10 +6,12 @@ import 'package:http/http.dart' as http;
 import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
 import 'api/api_routes.dart';
+import 'api/profile_picture_api.dart';
 import 'api/user_realtime_service.dart';
 import 'chats_page.dart';
 import 'product_details_page.dart';
 import 'components/studket_app_bar.dart';
+import 'seller_profile_page.dart';
 import 'user_profile_page.dart';
 
 class NotificationsPage extends StatefulWidget {
@@ -397,6 +399,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
       }
     }
 
+    if (type.contains('review') || entity.contains('review')) {
+      final bool opened = await _openReviewNotification(context, notification);
+      if (opened || !context.mounted) {
+        return;
+      }
+    }
+
     if (type.contains('seller') ||
         type.contains('account') ||
         type.contains('warning') ||
@@ -500,6 +509,86 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     ? ''
                     : '${resolveApiBaseUrl(apiPath: 'api/v1')}/profile-pictures/$ownerId',
             sellerRating: 4.5,
+          ),
+        ),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _openReviewNotification(
+    BuildContext context,
+    UserRealtimeNotification notification,
+  ) async {
+    final int? sellerId = notification.relatedEntityId;
+    if (sellerId == null || sellerId <= 0) {
+      return false;
+    }
+
+    try {
+      final http.Response response = await http
+          .get(
+            ApiRoutes.profileById(sellerId),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+          )
+          .timeout(kApiRequestTimeout);
+
+      String sellerName = notification.title.trim();
+      String avatarUrl = '';
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final dynamic decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          final String firstName =
+              (decoded['first_name'] ?? decoded['seller_first_name'] ?? '')
+                  .toString()
+                  .trim();
+          final String lastName =
+              (decoded['last_name'] ?? decoded['seller_last_name'] ?? '')
+                  .toString()
+                  .trim();
+          final String username =
+              (decoded['username'] ?? decoded['seller_username'] ?? '')
+                  .toString()
+                  .trim();
+          final String fullName =
+              '$firstName $lastName'.trim().replaceAll(RegExp(r'\s+'), ' ');
+          if (fullName.isNotEmpty) {
+            sellerName = fullName;
+          } else if (username.isNotEmpty) {
+            sellerName = username;
+          }
+
+          avatarUrl = normalizeApiAssetUrl(
+                (decoded['profile_photo'] ??
+                        decoded['seller_profile_photo'] ??
+                        decoded['avatar_url'] ??
+                        decoded['image_url'])
+                    ?.toString(),
+              ) ??
+              '';
+        }
+      }
+
+      if (avatarUrl.isEmpty) {
+        avatarUrl = (await ProfilePictureApi.resolveForAccount(sellerId)) ?? '';
+      }
+
+      if (!context.mounted) {
+        return true;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => SellerProfilePage(
+            sellerName: sellerName.isNotEmpty ? sellerName : 'Seller',
+            sellerAvatarUrl: avatarUrl,
+            sellerRating: 0,
+            sellerAccountId: sellerId,
           ),
         ),
       );
@@ -630,6 +719,10 @@ class _NotificationTypeIcon extends StatelessWidget {
       icon = Icons.sell_outlined;
       background = colorScheme.secondaryContainer;
       foreground = colorScheme.onSecondaryContainer;
+    } else if (type.contains('review') || entity.contains('review')) {
+      icon = Icons.star_rounded;
+      background = colorScheme.tertiaryContainer;
+      foreground = colorScheme.onTertiaryContainer;
     } else if (type.contains('seller') || entity.contains('seller')) {
       icon = Icons.storefront_outlined;
       background = colorScheme.primaryContainer;
