@@ -2645,42 +2645,6 @@ class _TransactionDetailHeaderState extends State<_TransactionDetailHeader> {
   }
 }
 
-class _DetailRow extends StatelessWidget {
-  const _DetailRow(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    final ColorScheme colorScheme = theme.colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          Text(
-            value,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colorScheme.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _DetailChip extends StatelessWidget {
   const _DetailChip({required this.label, required this.value});
 
