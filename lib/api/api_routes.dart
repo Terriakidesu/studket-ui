@@ -35,6 +35,14 @@ class ApiRoutes {
     return _build(path: 'transactions/$transactionId');
   }
 
+  static Uri transactionsForUser(int accountId) {
+    return _build(path: 'transactions/users/$accountId/');
+  }
+
+  static Uri transactionForUserById(int accountId, int transactionId) {
+    return _build(path: 'transactions/users/$accountId/$transactionId');
+  }
+
   static Uri cancelTransaction(int transactionId) {
     return _build(path: 'transactions/$transactionId/cancel');
   }
@@ -57,6 +65,38 @@ class ApiRoutes {
 
   static Uri listingById(int listingId) {
     return _build(path: 'listings/$listingId');
+  }
+
+  static Uri listingMedia(int listingId) {
+    return _build(path: 'listings/$listingId/media');
+  }
+
+  static Uri profileById(int accountId) {
+    return _build(path: 'profiles/$accountId');
+  }
+
+  static Uri reviews() {
+    return _build(path: 'reviews/');
+  }
+
+  static Uri reviewsForTransaction(int transactionId) {
+    return _build(path: 'reviews/transactions/$transactionId');
+  }
+
+  static Uri reviewsForUser(int accountId) {
+    return _build(path: 'reviews/users/$accountId');
+  }
+
+  static Uri reviewsForSeller(int sellerId) {
+    return _build(path: 'reviews/users/$sellerId');
+  }
+
+  static Uri reviewsForSellerDirect(int sellerId) {
+    return _build(path: 'reviews/users/$sellerId/direct');
+  }
+
+  static Uri reviewById(int reviewId) {
+    return _build(path: 'reviews/$reviewId');
   }
 
   static Uri listingInquiries(int listingId, {int? accountId}) {
