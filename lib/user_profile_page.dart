@@ -19,6 +19,7 @@ import 'api/auth_api.dart';
 import 'api/user_realtime_service.dart';
 import 'components/account_avatar.dart';
 import 'listing_editor_page.dart';
+import 'network_cached_image.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
@@ -548,6 +549,19 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => const AccountSettingsPage(),
+                        ),
+                      );
+                    },
+                  ),
+                  const Divider(height: 24),
+                  _ActionRow(
+                    icon: Icons.receipt_long_outlined,
+                    label: 'Transaction History',
+                    value: 'Recent purchases, refunds, and order statuses',
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const TransactionHistoryPage(),
                         ),
                       );
                     },
@@ -1166,7 +1180,7 @@ class _PostsListPage extends StatelessWidget {
       backgroundColor: colorScheme.surface,
       appBar: AppBar(title: Text(title)),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.zero,
         children: [
           if (items.isEmpty)
             Container(
@@ -1396,6 +1410,1646 @@ class AccountSettingsPage extends StatelessWidget {
       case ThemeMode.system:
         return 'Follow device';
     }
+  }
+}
+
+class TransactionHistoryPage extends StatefulWidget {
+  const TransactionHistoryPage({super.key});
+
+  @override
+  State<TransactionHistoryPage> createState() =>
+      _TransactionHistoryPageState();
+}
+
+class _TransactionHistoryPageState extends State<TransactionHistoryPage> {
+  bool _isLoading = false;
+  String? _errorMessage;
+  List<_TransactionHistoryItem> _items = const <_TransactionHistoryItem>[];
+  final Map<int, String?> _listingMediaUrls = <int, String?>{};
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadTransactions());
+  }
+
+  Future<void> _loadTransactions() async {
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null) {
+      setState(() {
+        _errorMessage = 'Missing account session. Please log in again.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final Map<String, String> headers = <String, String>{
+        'Accept': 'application/json',
+        ...ApiAuthSession.authHeaders(),
+      };
+
+      final http.Response response = await http
+          .get(ApiRoutes.transactionsForUser(accountId), headers: headers)
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractTransactionError(response));
+      }
+
+      final List<_TransactionHistoryItem> parsed = _parseTransactionsResponse(
+        response.body,
+      );
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _items = parsed;
+      });
+      await _prefetchListingMedia(parsed);
+    } on TimeoutException {
+      _setError('Transaction request timed out.');
+    } on SocketException {
+      _setError('Could not connect to the transactions API.');
+    } on HttpException catch (error) {
+      _setError(error.message);
+    } on FormatException {
+      _setError('Transaction response format was invalid.');
+    } catch (_) {
+      _setError('Failed to load transactions.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _prefetchListingMedia(
+    List<_TransactionHistoryItem> items,
+  ) async {
+    final List<int> listingIds = items
+        .map((item) => item.listingId)
+        .where((id) => id > 0 && !_listingMediaUrls.containsKey(id))
+        .toSet()
+        .toList(growable: false);
+
+    if (listingIds.isEmpty) {
+      return;
+    }
+
+    final Map<String, String> headers = <String, String>{
+      'Accept': 'application/json',
+      ...ApiAuthSession.authHeaders(),
+    };
+
+    for (final int listingId in listingIds) {
+      try {
+        final http.Response response = await http
+            .get(ApiRoutes.listingMedia(listingId), headers: headers)
+            .timeout(kApiRequestTimeout);
+
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          continue;
+        }
+
+        final dynamic decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic>) {
+          continue;
+        }
+
+        final _ListingMediaResponse media = _ListingMediaResponse.fromJson(
+          decoded,
+        );
+
+        final String? rawUrl = media.primaryMediaUrl ??
+            (media.items.isNotEmpty ? media.items.first.fileUrl : null);
+        final String? resolved = normalizeApiAssetUrl(rawUrl);
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _listingMediaUrls[listingId] = resolved;
+        });
+      } catch (_) {
+        // Ignore media fetch failures so the list remains responsive.
+      }
+    }
+  }
+
+  void _setError(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _errorMessage = message;
+    });
+  }
+
+  String _extractTransactionError(http.Response response) {
+    try {
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final dynamic detail = decoded['detail'] ?? decoded['message'];
+        if (detail is String && detail.trim().isNotEmpty) {
+          return detail.trim();
+        }
+      }
+    } catch (_) {}
+    return 'Transactions request failed (HTTP ${response.statusCode}).';
+  }
+
+  List<_TransactionHistoryItem> _parseTransactionsResponse(String body) {
+    final dynamic decoded = jsonDecode(body);
+    final List<dynamic> items = decoded is Map<String, dynamic>
+        ? (decoded['items'] as List<dynamic>? ?? const <dynamic>[])
+        : decoded is List
+            ? decoded
+            : const <dynamic>[];
+
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(_TransactionHistoryItem.fromJson)
+        .toList(growable: false);
+  }
+
+  String _summaryText(String username) {
+    if (_items.isEmpty) {
+      return 'No transactions recorded for $username yet.';
+    }
+    return 'Tracking the latest purchases and sales for $username.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final String username = ApiAuthSession.username ?? 'studket_user';
+
+    return Scaffold(
+      backgroundColor: colorScheme.surface,
+      appBar: AppBar(
+        title: const Text('Transaction History'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: _isLoading ? null : _loadTransactions,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            'Recent activity',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _summaryText(username),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_errorMessage != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: colorScheme.error.withValues(alpha: 0.28),
+                ),
+              ),
+              child: Text(
+                _errorMessage!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onErrorContainer,
+                ),
+              ),
+            )
+          else if (_items.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: colorScheme.outlineVariant),
+              ),
+              child: Text(
+                'No transactions yet. Completed orders will show here.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            )
+          else
+            ..._items.map(
+              (_TransactionHistoryItem item) => _TransactionHistoryTile(
+                item: item,
+                imageUrl: _listingMediaUrls[item.listingId],
+                onTap: () {
+                  final int? accountId = ApiAuthSession.accountId;
+                  if (accountId == null) {
+                    return;
+                  }
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => TransactionDetailsPage(
+                        accountId: accountId,
+                        transactionId: item.transactionId,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TransactionHistoryTile extends StatelessWidget {
+  const _TransactionHistoryTile({
+    required this.item,
+    required this.imageUrl,
+    required this.onTap,
+  });
+
+  final _TransactionHistoryItem item;
+  final String? imageUrl;
+  final VoidCallback onTap;
+
+  String _formatPrice(double price) {
+    return price % 1 == 0
+        ? 'PHP ${price.toStringAsFixed(0)}'
+        : 'PHP ${price.toStringAsFixed(2)}';
+  }
+
+  String _formatCompletedAt() {
+    if (item.completedAt == null) {
+      return 'Completion time unavailable';
+    }
+    final DateTime local = item.completedAt!.toLocal();
+    final String date =
+        '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+    final String time =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return '$date - $time';
+  }
+
+  String _listingTypeLabel() {
+    if (item.isLookingFor) {
+      return 'Looking For';
+    }
+    final String normalized = item.listingType.trim().toLowerCase();
+    if (normalized == 'looking_for' || normalized == 'looking for') {
+      return 'Looking For';
+    }
+    if (normalized.isEmpty) {
+      return 'Listing';
+    }
+    return normalized.replaceAll('_', ' ');
+  }
+
+  String _roleLabel() {
+    final String normalized = item.role.trim().toLowerCase();
+    if (normalized == 'seller') {
+      return 'Sold';
+    }
+    if (normalized == 'buyer') {
+      return 'Bought';
+    }
+    return normalized.isEmpty ? 'Bought' : normalized;
+  }
+
+  bool _isLookingFor() {
+    if (item.isLookingFor) {
+      return true;
+    }
+    final String normalized = item.listingType.trim().toLowerCase();
+    return normalized == 'looking_for' || normalized == 'looking for';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final bool isLookingFor = _isLookingFor();
+    final String title = item.listingTitle.trim().isNotEmpty
+        ? item.listingTitle.trim()
+        : 'Listing #${item.listingId}';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    color: colorScheme.surfaceContainerHigh,
+                    child: imageUrl != null
+                        ? Image.network(
+                            imageUrl!,
+                            fit: BoxFit.cover,
+                          )
+                        : Icon(
+                            item.role == 'seller'
+                                ? Icons.sell_outlined
+                                : Icons.shopping_bag_outlined,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _roleLabel() == 'Sold'
+                                  ? colorScheme.primaryContainer
+                                  : colorScheme.secondaryContainer,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              _roleLabel(),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: _roleLabel() == 'Sold'
+                                    ? colorScheme.onPrimaryContainer
+                                    : colorScheme.onSecondaryContainer,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            item.transactionStatus,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isLookingFor
+                                  ? colorScheme.tertiaryContainer
+                                  : colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              _listingTypeLabel(),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: isLookingFor
+                                    ? colorScheme.onTertiaryContainer
+                                    : colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatCompletedAt(),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _formatPrice(item.agreedPrice),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class TransactionDetailsPage extends StatefulWidget {
+  const TransactionDetailsPage({
+    super.key,
+    required this.accountId,
+    required this.transactionId,
+  });
+
+  final int accountId;
+  final int transactionId;
+
+  @override
+  State<TransactionDetailsPage> createState() => _TransactionDetailsPageState();
+}
+
+class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
+  bool _isLoading = false;
+  String? _errorMessage;
+  _TransactionDetails? _details;
+  List<_ListingMediaItem> _mediaItems = const <_ListingMediaItem>[];
+  String? _primaryMediaUrl;
+  bool _isReviewsLoading = false;
+  String? _reviewsError;
+  List<_ReviewItem> _reviews = const <_ReviewItem>[];
+  int _reviewRating = 5;
+  final TextEditingController _reviewCommentController =
+      TextEditingController();
+  bool _isSubmittingReview = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadDetails());
+  }
+
+  Future<void> _loadDetails() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final Map<String, String> headers = <String, String>{
+        'Accept': 'application/json',
+        ...ApiAuthSession.authHeaders(),
+      };
+
+      final http.Response response = await http
+          .get(
+            ApiRoutes.transactionForUserById(
+              widget.accountId,
+              widget.transactionId,
+            ),
+            headers: headers,
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractTransactionError(response));
+      }
+
+      final _TransactionDetails parsed =
+          _TransactionDetails.fromJson(jsonDecode(response.body));
+      final _ListingMediaResponse media =
+          await _loadListingMedia(parsed.listingId);
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _details = parsed;
+        _mediaItems = media.items;
+        _primaryMediaUrl = media.primaryMediaUrl;
+      });
+      if (!_isLookingFor(parsed.listingType) &&
+          parsed.role.trim().toLowerCase() != 'seller') {
+        unawaited(_loadReviews(parsed.transactionId));
+      }
+    } on TimeoutException {
+      _setError('Transaction details request timed out.');
+    } on SocketException {
+      _setError('Could not connect to the transactions API.');
+    } on HttpException catch (error) {
+      _setError(error.message);
+    } on FormatException {
+      _setError('Transaction details response format was invalid.');
+    } catch (_) {
+      _setError('Failed to load transaction details.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _reviewCommentController.dispose();
+    super.dispose();
+  }
+
+  void _setError(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _errorMessage = message;
+    });
+  }
+
+  String _extractTransactionError(http.Response response) {
+    try {
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final String? detail = _extractErrorMessage(decoded['detail']) ??
+            _extractErrorMessage(decoded['message']);
+        if (detail != null && detail.trim().isNotEmpty) {
+          return detail.trim();
+        }
+      }
+    } catch (_) {}
+    return 'Transaction request failed (HTTP ${response.statusCode}).';
+  }
+
+  String? _extractErrorMessage(dynamic value) {
+    if (value is String) {
+      return value;
+    }
+    if (value is Map<String, dynamic>) {
+      final dynamic error = value['error'];
+      if (error is String && error.trim().isNotEmpty) {
+        return error;
+      }
+    }
+    return null;
+  }
+
+  bool _isLookingFor(String raw) {
+    final String normalized = raw.trim().toLowerCase();
+    return normalized == 'looking_for' || normalized == 'looking for';
+  }
+
+  Future<void> _loadReviews(int transactionId) async {
+    setState(() {
+      _isReviewsLoading = true;
+      _reviewsError = null;
+    });
+
+    try {
+      final Map<String, String> headers = <String, String>{
+        'Accept': 'application/json',
+        ...ApiAuthSession.authHeaders(),
+      };
+
+      final http.Response response = await http
+          .get(ApiRoutes.reviewsForTransaction(transactionId), headers: headers)
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractTransactionError(response));
+      }
+
+      final List<_ReviewItem> parsed = _parseReviewsResponse(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _reviews = parsed;
+      });
+    } on TimeoutException {
+      _setReviewsError('Reviews request timed out.');
+    } on SocketException {
+      _setReviewsError('Could not connect to the reviews API.');
+    } on HttpException catch (error) {
+      _setReviewsError(error.message);
+    } on FormatException {
+      _setReviewsError('Reviews response format was invalid.');
+    } catch (_) {
+      _setReviewsError('Failed to load reviews.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isReviewsLoading = false;
+        });
+      }
+    }
+  }
+
+  List<_ReviewItem> _parseReviewsResponse(String body) {
+    final dynamic decoded = jsonDecode(body);
+    final List<dynamic> items = decoded is List
+        ? decoded
+        : decoded is Map<String, dynamic>
+            ? (decoded['items'] as List<dynamic>? ?? const <dynamic>[])
+            : const <dynamic>[];
+
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(_ReviewItem.fromJson)
+        .toList(growable: false);
+  }
+
+  void _setReviewsError(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _reviewsError = message;
+    });
+  }
+
+  bool _canSubmitReview(_TransactionDetails details) {
+    if (_isLookingFor(details.listingType)) {
+      return false;
+    }
+    if (details.transactionStatus.trim().toLowerCase() != 'completed') {
+      return false;
+    }
+    return _reviews.isEmpty;
+  }
+
+  Future<void> _submitReview(_TransactionDetails details) async {
+    if (_isSubmittingReview) {
+      return;
+    }
+    final int? accountId = ApiAuthSession.accountId;
+    if (accountId == null) {
+      _setReviewsError('Missing account session. Please log in again.');
+      return;
+    }
+
+    setState(() {
+      _isSubmittingReview = true;
+      _reviewsError = null;
+    });
+
+    try {
+      final Map<String, String> headers = <String, String>{
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        ...ApiAuthSession.authHeaders(),
+      };
+
+      final Map<String, dynamic> payload = <String, dynamic>{
+        'transaction_id': details.transactionId,
+        'reviewer_id': accountId,
+        'rating': _reviewRating,
+      };
+
+      final String comment = _reviewCommentController.text.trim();
+      if (comment.isNotEmpty) {
+        payload['comment'] = comment;
+      }
+
+      final http.Response response = await http
+          .post(
+            ApiRoutes.reviewsForSeller(details.sellerAccountId),
+            headers: headers,
+            body: jsonEncode(payload),
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractTransactionError(response));
+      }
+
+      if (!mounted) {
+        return;
+      }
+      _reviewCommentController.clear();
+      setState(() {
+        _reviewRating = 5;
+      });
+      await _loadReviews(details.transactionId);
+    } on TimeoutException {
+      _setReviewsError('Review submission timed out.');
+    } on SocketException {
+      _setReviewsError('Could not connect to the reviews API.');
+    } on HttpException catch (error) {
+      _setReviewsError(error.message);
+    } on FormatException {
+      _setReviewsError('Review response format was invalid.');
+    } catch (_) {
+      _setReviewsError('Failed to submit review.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingReview = false;
+        });
+      }
+    }
+  }
+
+  Future<_ListingMediaResponse> _loadListingMedia(int listingId) async {
+    final Map<String, String> headers = <String, String>{
+      'Accept': 'application/json',
+      ...ApiAuthSession.authHeaders(),
+    };
+
+    final http.Response response = await http
+        .get(ApiRoutes.listingMedia(listingId), headers: headers)
+        .timeout(kApiRequestTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return const _ListingMediaResponse(
+        listingId: 0,
+        items: <_ListingMediaItem>[],
+        primaryMediaUrl: null,
+      );
+    }
+
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      return const _ListingMediaResponse(
+        listingId: 0,
+        items: <_ListingMediaItem>[],
+        primaryMediaUrl: null,
+      );
+    }
+
+    return _ListingMediaResponse.fromJson(decoded);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+
+    return Scaffold(
+      backgroundColor: colorScheme.surface,
+      appBar: AppBar(title: const Text('Transaction Details')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_errorMessage != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: colorScheme.error.withValues(alpha: 0.28),
+                ),
+              ),
+              child: Text(
+                _errorMessage!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onErrorContainer,
+                ),
+              ),
+            )
+          else if (_details == null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: colorScheme.outlineVariant),
+              ),
+              child: Text(
+                'No transaction details found.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            )
+          else ...[
+            _TransactionDetailHeader(
+              details: _details!,
+              imageUrls: _mediaItems
+                  .map((item) => item.fileUrl)
+                  .where((url) => url.trim().isNotEmpty)
+                  .toList(growable: false),
+              fallbackImageUrl: _primaryMediaUrl,
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _TransactionDetailSection(
+                title: 'Buyer',
+                rows: [
+                  _DetailRow('Username', _details!.buyerUsername),
+                  _DetailRow('Email', _details!.buyerEmail),
+                  _DetailRow('Campus', _details!.buyerCampus),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _TransactionDetailSection(
+                title: 'Seller',
+                rows: [
+                  _DetailRow('Username', _details!.sellerUsername),
+                  _DetailRow('Email', _details!.sellerEmail),
+                  _DetailRow('Campus', _details!.sellerCampus),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (_details!.role.trim().toLowerCase() != 'seller')
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _TransactionReviewSection(
+                  details: _details!,
+                  reviews: _reviews,
+                  isLoading: _isReviewsLoading,
+                  errorMessage: _reviewsError,
+                  canSubmit: _canSubmitReview(_details!),
+                  rating: _reviewRating,
+                  commentController: _reviewCommentController,
+                  isSubmitting: _isSubmittingReview,
+                  onRatingChanged: (value) {
+                    setState(() {
+                      _reviewRating = value;
+                    });
+                  },
+                  onSubmit: () => _submitReview(_details!),
+                ),
+              ),
+            const SizedBox(height: 24),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TransactionDetailHeader extends StatefulWidget {
+  const _TransactionDetailHeader({
+    required this.details,
+    required this.imageUrls,
+    required this.fallbackImageUrl,
+  });
+
+  final _TransactionDetails details;
+  final List<String> imageUrls;
+  final String? fallbackImageUrl;
+
+  @override
+  State<_TransactionDetailHeader> createState() =>
+      _TransactionDetailHeaderState();
+}
+
+class _TransactionDetailHeaderState extends State<_TransactionDetailHeader> {
+  int _currentImageIndex = 0;
+  bool _isLookingFor = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _isLookingFor = _normalizeIsLookingFor(widget.details.listingType);
+  }
+
+  bool _normalizeIsLookingFor(String raw) {
+    final String normalized = raw.trim().toLowerCase();
+    return normalized == 'looking_for' || normalized == 'looking for';
+  }
+
+  String _formatPrice(double price) {
+    return price % 1 == 0
+        ? 'PHP ${price.toStringAsFixed(0)}'
+        : 'PHP ${price.toStringAsFixed(2)}';
+  }
+
+  String _formatDate(DateTime? value) {
+    if (value == null) {
+      return 'Not available';
+    }
+    final DateTime local = value.toLocal();
+    final String date =
+        '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+    final String time =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return '$date - $time';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final List<String> resolvedUrls = widget.imageUrls
+        .map(normalizeApiAssetUrl)
+        .whereType<String>()
+        .toList(growable: false);
+    final String? fallbackUrl = normalizeApiAssetUrl(widget.fallbackImageUrl);
+    final List<String> allUrls = resolvedUrls.isNotEmpty
+        ? resolvedUrls
+        : (fallbackUrl == null ? const <String>[] : [fallbackUrl]);
+    final bool hasImages = allUrls.isNotEmpty && !_isLookingFor;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (hasImages) ...[
+          AspectRatio(
+            aspectRatio: 1,
+            child: PageView.builder(
+              itemCount: allUrls.length,
+              onPageChanged: (index) {
+                setState(() {
+                  _currentImageIndex = index;
+                });
+              },
+              itemBuilder: (context, index) {
+                return NetworkCachedImage(
+                  imageUrl: allUrls[index],
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(allUrls.length, (index) {
+              final bool isActive = index == _currentImageIndex;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                width: isActive ? 18 : 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: isActive ? colorScheme.primary : Colors.grey[300],
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              );
+            }),
+          ),
+        ],
+        Padding(
+          padding: EdgeInsets.fromLTRB(16, hasImages ? 16 : 24, 16, 0),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: colorScheme.outlineVariant),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.details.listingTitle,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Status: ${widget.details.transactionStatus}',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    _DetailChip(
+                      label: 'Role',
+                      value: widget.details.role.toUpperCase(),
+                    ),
+                    _DetailChip(
+                      label: 'Quantity',
+                      value: '${widget.details.quantity}',
+                    ),
+                    _DetailChip(
+                      label: 'Agreed',
+                      value: _formatPrice(widget.details.agreedPrice),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Completed: ${_formatDate(widget.details.completedAt)}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TransactionDetailSection extends StatelessWidget {
+  const _TransactionDetailSection({
+    required this.title,
+    required this.rows,
+  });
+
+  final String title;
+  final List<_DetailRow> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...rows.map((row) => row),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow(this.label, this.value);
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailChip extends StatelessWidget {
+  const _DetailChip({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        '$label: $value',
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _TransactionHistoryItem {
+  const _TransactionHistoryItem({
+    required this.role,
+    required this.transactionId,
+    required this.listingId,
+    required this.listingType,
+    required this.listingTitle,
+    required this.isLookingFor,
+    required this.buyerId,
+    required this.sellerId,
+    required this.quantity,
+    required this.agreedPrice,
+    required this.transactionStatus,
+    required this.completedAt,
+  });
+
+  final String role;
+  final int transactionId;
+  final int listingId;
+  final String listingType;
+  final String listingTitle;
+  final bool isLookingFor;
+  final int buyerId;
+  final int sellerId;
+  final int quantity;
+  final double agreedPrice;
+  final String transactionStatus;
+  final DateTime? completedAt;
+
+  factory _TransactionHistoryItem.fromJson(Map<String, dynamic> json) {
+    return _TransactionHistoryItem(
+      role: (json['role'] as String?)?.trim().isNotEmpty == true
+          ? (json['role'] as String)
+          : 'buyer',
+      transactionId: (json['transaction_id'] as num?)?.toInt() ?? 0,
+      listingId: (json['listing_id'] as num?)?.toInt() ?? 0,
+      listingType: (json['listing_type'] as String?)?.trim() ?? '',
+      listingTitle: (json['listing_title'] as String?)?.trim() ?? '',
+      isLookingFor: json['is_looking_for'] == true,
+      buyerId: (json['buyer_id'] as num?)?.toInt() ?? 0,
+      sellerId: (json['seller_id'] as num?)?.toInt() ?? 0,
+      quantity: (json['quantity'] as num?)?.toInt() ?? 0,
+      agreedPrice: (json['agreed_price'] as num?)?.toDouble() ?? 0,
+      transactionStatus:
+          (json['transaction_status'] as String?)?.trim().isNotEmpty == true
+              ? (json['transaction_status'] as String)
+              : 'unknown',
+      completedAt: _parseDate(json['completed_at']),
+    );
+  }
+
+  static DateTime? _parseDate(dynamic value) {
+    if (value is String && value.trim().isNotEmpty) {
+      return DateTime.tryParse(value);
+    }
+    return null;
+  }
+}
+
+class _TransactionDetails {
+  const _TransactionDetails({
+    required this.role,
+    required this.transactionId,
+    required this.transactionStatus,
+    required this.quantity,
+    required this.agreedPrice,
+    required this.completedAt,
+    required this.listingId,
+    required this.listingType,
+    required this.listingTitle,
+    required this.sellerAccountId,
+    required this.buyerUsername,
+    required this.buyerEmail,
+    required this.buyerCampus,
+    required this.sellerUsername,
+    required this.sellerEmail,
+    required this.sellerCampus,
+  });
+
+  final String role;
+  final int transactionId;
+  final String transactionStatus;
+  final int quantity;
+  final double agreedPrice;
+  final DateTime? completedAt;
+  final int listingId;
+  final String listingType;
+  final String listingTitle;
+  final int sellerAccountId;
+  final String buyerUsername;
+  final String buyerEmail;
+  final String buyerCampus;
+  final String sellerUsername;
+  final String sellerEmail;
+  final String sellerCampus;
+
+  factory _TransactionDetails.fromJson(Map<String, dynamic> json) {
+    return _TransactionDetails(
+      role: (json['role'] as String?)?.trim().isNotEmpty == true
+          ? (json['role'] as String)
+          : 'buyer',
+      transactionId: (json['transaction_id'] as num?)?.toInt() ?? 0,
+      transactionStatus:
+          (json['transaction_status'] as String?)?.trim().isNotEmpty == true
+              ? (json['transaction_status'] as String)
+              : 'unknown',
+      quantity: (json['transaction_quantity'] as num?)?.toInt() ??
+          (json['transactionQuantity'] as num?)?.toInt() ??
+          0,
+      agreedPrice: (json['transaction_agreed_price'] as num?)?.toDouble() ?? 0,
+      completedAt: _TransactionHistoryItem._parseDate(
+        json['transaction_completed_at'],
+      ),
+      listingId: (json['listing_id'] as num?)?.toInt() ??
+          (json['transaction_listing_id'] as num?)?.toInt() ??
+          0,
+      listingType: (json['listing_type'] as String?)?.trim() ?? '',
+      listingTitle: (json['listing_title'] as String?)?.trim().isNotEmpty == true
+          ? (json['listing_title'] as String)
+          : 'Listing',
+      sellerAccountId: (json['seller_account_id'] as num?)?.toInt() ??
+          (json['listing_seller_id'] as num?)?.toInt() ??
+          (json['seller_id'] as num?)?.toInt() ??
+          0,
+      buyerUsername: (json['buyer_username'] as String?)?.trim().isNotEmpty ==
+              true
+          ? (json['buyer_username'] as String)
+          : 'Buyer',
+      buyerEmail: (json['buyer_email'] as String?)?.trim().isNotEmpty == true
+          ? (json['buyer_email'] as String)
+          : '-',
+      buyerCampus: (json['buyer_campus'] as String?)?.trim().isNotEmpty == true
+          ? (json['buyer_campus'] as String)
+          : '-',
+      sellerUsername: (json['seller_username'] as String?)?.trim().isNotEmpty ==
+              true
+          ? (json['seller_username'] as String)
+          : 'Seller',
+      sellerEmail: (json['seller_email'] as String?)?.trim().isNotEmpty == true
+          ? (json['seller_email'] as String)
+          : '-',
+      sellerCampus: (json['seller_campus'] as String?)?.trim().isNotEmpty == true
+          ? (json['seller_campus'] as String)
+          : '-',
+    );
+  }
+}
+
+class _TransactionReviewSection extends StatelessWidget {
+  const _TransactionReviewSection({
+    required this.details,
+    required this.reviews,
+    required this.isLoading,
+    required this.errorMessage,
+    required this.canSubmit,
+    required this.rating,
+    required this.commentController,
+    required this.isSubmitting,
+    required this.onRatingChanged,
+    required this.onSubmit,
+  });
+
+  final _TransactionDetails details;
+  final List<_ReviewItem> reviews;
+  final bool isLoading;
+  final String? errorMessage;
+  final bool canSubmit;
+  final int rating;
+  final TextEditingController commentController;
+  final bool isSubmitting;
+  final ValueChanged<int> onRatingChanged;
+  final VoidCallback onSubmit;
+
+  bool _isLookingFor() {
+    final String normalized = details.listingType.trim().toLowerCase();
+    return normalized == 'looking_for' || normalized == 'looking for';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final bool isLookingFor = _isLookingFor();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Reviews',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (isLookingFor)
+            Text(
+              'Reviews are not supported for looking-for transactions.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            )
+          else if (isLoading)
+            const Center(child: CircularProgressIndicator())
+          else if (errorMessage != null)
+            Text(
+              errorMessage!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.error,
+              ),
+            )
+          else if (reviews.isNotEmpty)
+            Column(
+              children: reviews
+                  .map(
+                    (_ReviewItem review) => _ReviewTile(review: review),
+                  )
+                  .toList(growable: false),
+            )
+          else if (!canSubmit)
+            Text(
+              'No reviews available yet.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            )
+          else ...[
+            _ReviewRatingPicker(
+              rating: rating,
+              onChanged: onRatingChanged,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: commentController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Comment (optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: isSubmitting ? null : onSubmit,
+                child: isSubmitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Submit Review'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewRatingPicker extends StatelessWidget {
+  const _ReviewRatingPicker({
+    required this.rating,
+    required this.onChanged,
+  });
+
+  final int rating;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Rating',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: List.generate(5, (index) {
+            final int value = index + 1;
+            final bool isActive = value <= rating;
+            return IconButton(
+              onPressed: () => onChanged(value),
+              icon: Icon(
+                isActive ? Icons.star_rounded : Icons.star_border_rounded,
+                color: isActive ? colorScheme.primary : colorScheme.outline,
+              ),
+            );
+          }),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReviewTile extends StatelessWidget {
+  const _ReviewTile({required this.review});
+
+  final _ReviewItem review;
+
+  String _formatDate(DateTime? value) {
+    if (value == null) {
+      return '';
+    }
+    final DateTime local = value.toLocal();
+    return '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: List.generate(5, (index) {
+              final bool isActive = index < review.rating;
+              return Icon(
+                isActive ? Icons.star_rounded : Icons.star_border_rounded,
+                size: 18,
+                color: isActive ? colorScheme.primary : colorScheme.outline,
+              );
+            }),
+          ),
+          if (review.comment.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              review.comment,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurface,
+              ),
+            ),
+          ],
+          if (review.createdAt != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _formatDate(review.createdAt),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewItem {
+  const _ReviewItem({
+    required this.reviewId,
+    required this.transactionId,
+    required this.reviewerId,
+    required this.revieweeId,
+    required this.rating,
+    required this.comment,
+    required this.createdAt,
+  });
+
+  final int reviewId;
+  final int transactionId;
+  final int reviewerId;
+  final int revieweeId;
+  final int rating;
+  final String comment;
+  final DateTime? createdAt;
+
+  factory _ReviewItem.fromJson(Map<String, dynamic> json) {
+    return _ReviewItem(
+      reviewId: (json['review_id'] as num?)?.toInt() ?? 0,
+      transactionId: (json['transaction_id'] as num?)?.toInt() ?? 0,
+      reviewerId: (json['reviewer_id'] as num?)?.toInt() ?? 0,
+      revieweeId: (json['reviewee_id'] as num?)?.toInt() ?? 0,
+      rating: (json['rating'] as num?)?.toInt() ?? 0,
+      comment: (json['comment'] as String?)?.trim() ?? '',
+      createdAt: _TransactionHistoryItem._parseDate(json['created_at']),
+    );
+  }
+}
+
+class _ListingMediaResponse {
+  const _ListingMediaResponse({
+    required this.listingId,
+    required this.items,
+    required this.primaryMediaUrl,
+  });
+
+  final int listingId;
+  final List<_ListingMediaItem> items;
+  final String? primaryMediaUrl;
+
+  factory _ListingMediaResponse.fromJson(Map<String, dynamic> json) {
+    final List<dynamic> rawItems =
+        (json['items'] as List<dynamic>? ?? const <dynamic>[]);
+    return _ListingMediaResponse(
+      listingId: (json['listing_id'] as num?)?.toInt() ?? 0,
+      items: rawItems
+          .whereType<Map<String, dynamic>>()
+          .map(_ListingMediaItem.fromJson)
+          .toList(growable: false),
+      primaryMediaUrl: (json['primary_media_url'] as String?)?.trim(),
+    );
+  }
+}
+
+class _ListingMediaItem {
+  const _ListingMediaItem({
+    required this.mediaId,
+    required this.listingId,
+    required this.filePath,
+    required this.fileUrl,
+    required this.sortOrder,
+  });
+
+  final int mediaId;
+  final int listingId;
+  final String filePath;
+  final String fileUrl;
+  final int sortOrder;
+
+  factory _ListingMediaItem.fromJson(Map<String, dynamic> json) {
+    return _ListingMediaItem(
+      mediaId: (json['media_id'] as num?)?.toInt() ?? 0,
+      listingId: (json['listing_id'] as num?)?.toInt() ?? 0,
+      filePath: (json['file_path'] as String?)?.trim() ?? '',
+      fileUrl: (json['file_url'] as String?)?.trim() ?? '',
+      sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
+    );
   }
 }
 

@@ -1,12 +1,17 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'chats_page.dart';
 import 'seller_profile_page.dart';
 import 'network_cached_image.dart';
 import 'components/account_avatar.dart';
 import 'components/rating_stars.dart';
 import 'components/studket_app_bar.dart';
+import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
+import 'api/api_routes.dart';
 
 class ProductDetailsPage extends StatefulWidget {
   const ProductDetailsPage({
@@ -46,6 +51,9 @@ class ProductDetailsPage extends StatefulWidget {
 
 class _ProductDetailsPageState extends State<ProductDetailsPage> {
   int _currentImageIndex = 0;
+  double? _derivedSellerRating;
+  int _sellerReviewCount = 0;
+  bool _isLoadingSellerRating = false;
 
   bool get _hasImages => widget.imageUrls.isNotEmpty;
   bool get _isLookingFor =>
@@ -67,6 +75,83 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
       fragment: null,
     );
     return originUri.resolve('/share/$token').toString();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.sellerAccountId != null) {
+      _loadSellerRating();
+    }
+  }
+
+  double get _displaySellerRating =>
+      _derivedSellerRating ?? widget.sellerRating;
+
+  Future<void> _loadSellerRating() async {
+    final int? sellerId = widget.sellerAccountId;
+    if (sellerId == null || _isLoadingSellerRating) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingSellerRating = true;
+    });
+
+    try {
+      final http.Response response = await http
+          .get(
+            ApiRoutes.reviewsForUser(sellerId),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+
+      final List<int> ratings = _extractRatings(response.body);
+      if (!mounted) {
+        return;
+      }
+      if (ratings.isEmpty) {
+        setState(() {
+          _sellerReviewCount = 0;
+        });
+        return;
+      }
+      final int total = ratings.fold<int>(0, (sum, value) => sum + value);
+      setState(() {
+        _sellerReviewCount = ratings.length;
+        _derivedSellerRating = total / ratings.length;
+      });
+    } catch (_) {
+      // Ignore seller rating load failures.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingSellerRating = false;
+        });
+      }
+    }
+  }
+
+  List<int> _extractRatings(String body) {
+    final dynamic decoded = jsonDecode(body);
+    final List<dynamic> items = decoded is List
+        ? decoded
+        : decoded is Map<String, dynamic>
+            ? (decoded['items'] as List<dynamic>? ?? const <dynamic>[])
+            : const <dynamic>[];
+
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map((item) => (item['rating'] as num?)?.toInt() ?? 0)
+        .where((value) => value > 0)
+        .toList(growable: false);
   }
 
   Future<void> _copyShareUrl() async {
@@ -290,14 +375,15 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
                       onTap: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => SellerProfilePage(
-                              sellerName: widget.sellerName,
-                              sellerAvatarUrl: widget.sellerAvatarUrl,
-                              sellerRating: widget.sellerRating,
-                            ),
+                          builder: (_) => SellerProfilePage(
+                            sellerName: widget.sellerName,
+                            sellerAvatarUrl: widget.sellerAvatarUrl,
+                            sellerRating: widget.sellerRating,
+                            sellerAccountId: widget.sellerAccountId,
                           ),
-                        );
-                      },
+                        ),
+                      );
+                    },
                       child: Padding(
                         padding: const EdgeInsets.all(12),
                         child: Row(
@@ -319,9 +405,23 @@ class _ProductDetailsPageState extends State<ProductDetailsPage> {
                                     ).textTheme.titleMedium,
                                   ),
                                   const SizedBox(height: 4),
-                                  RatingStars(
-                                    rating: widget.sellerRating,
-                                    showValue: true,
+                                  Row(
+                                    children: [
+                                      RatingStars(
+                                        rating: _displaySellerRating,
+                                        showValue: true,
+                                      ),
+                                      if (_sellerReviewCount > 0)
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 6),
+                                          child: Text(
+                                            '($_sellerReviewCount)',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall,
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ],
                               ),

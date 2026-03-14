@@ -34,6 +34,7 @@ class _ChatsPageState extends State<ChatsPage> {
   void _openOtherUserProfile({
     required String name,
     required String avatarUrl,
+    int? accountId,
   }) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -41,6 +42,7 @@ class _ChatsPageState extends State<ChatsPage> {
           sellerName: name,
           sellerAvatarUrl: avatarUrl,
           sellerRating: 4.5,
+          sellerAccountId: accountId,
         ),
       ),
     );
@@ -199,6 +201,7 @@ class _ChatsPageState extends State<ChatsPage> {
                       _openOtherUserProfile(
                         name: conversation.title,
                         avatarUrl: _avatarUrlForConversation(conversation),
+                        accountId: avatarAccountId,
                       );
                     },
                     child: AccountAvatar(

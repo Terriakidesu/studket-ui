@@ -985,6 +985,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
                     sellerName: widget.sellerName,
                     sellerAvatarUrl: widget.sellerAvatarUrl,
                     sellerRating: 4.5,
+                    sellerAccountId: widget.sellerAccountId,
                   ),
                 ),
               );
