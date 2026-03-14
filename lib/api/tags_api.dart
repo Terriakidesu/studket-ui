@@ -66,4 +66,53 @@ class TagsApi {
 
     return normalized;
   }
+
+  static Future<List<String>> fetchAllTags({int limit = 200}) async {
+    final Uri uri = ApiRoutes.tagsList(limit: limit);
+    final http.Response response = await http
+        .get(
+          uri,
+          headers: <String, String>{
+            'Accept': 'application/json',
+            ...ApiAuthSession.authHeaders(),
+          },
+        )
+        .timeout(kApiRequestTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException('Tags request failed (HTTP ${response.statusCode}).');
+    }
+
+    final dynamic decoded = jsonDecode(response.body);
+    final List<dynamic> items = decoded is List
+        ? decoded
+        : decoded is Map<String, dynamic>
+            ? (decoded['items'] as List<dynamic>? ??
+                decoded['tags'] as List<dynamic>? ??
+                decoded['results'] as List<dynamic>? ??
+                const <dynamic>[])
+            : const <dynamic>[];
+
+    final List<String> normalized = items
+        .map((dynamic item) {
+          if (item is String) {
+            return item.trim();
+          }
+          if (item is Map<String, dynamic>) {
+            final dynamic value =
+                item['tag_name'] ??
+                item['tag'] ??
+                item['name'] ??
+                item['label'];
+            return value?.toString().trim() ?? '';
+          }
+          return item.toString().trim();
+        })
+        .where((String value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false)
+      ..sort();
+
+    return normalized;
+  }
 }

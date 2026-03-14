@@ -147,6 +147,16 @@ class ApiRoutes {
     );
   }
 
+  static Uri tagsList({int? limit, int? offset}) {
+    return _build(
+      path: 'tags/list',
+      queryParameters: <String, dynamic>{
+        if (limit != null) 'limit': '$limit',
+        if (offset != null) 'offset': '$offset',
+      },
+    );
+  }
+
   static Uri listingsFeed({
     int? userId,
     List<String> tags = const <String>[],
@@ -160,6 +170,26 @@ class ApiRoutes {
       if (tags.isNotEmpty) 'tags': tags,
     };
     return _build(path: 'listings/feed', queryParameters: queryParameters);
+  }
+
+  static Uri listingsSearch({
+    String? query,
+    String? listingType,
+    List<String> tags = const <String>[],
+    int limit = 20,
+    int? offset,
+    int? ownerId,
+  }) {
+    final Map<String, dynamic> queryParameters = <String, dynamic>{
+      if (query != null && query.trim().isNotEmpty) 'q': query.trim(),
+      if (listingType != null && listingType.trim().isNotEmpty)
+        'listing_type': listingType.trim(),
+      if (tags.isNotEmpty) 'tag': tags,
+      if (ownerId != null) 'owner_id': '$ownerId',
+      'limit': '$limit',
+      if (offset != null) 'offset': '$offset',
+    };
+    return _build(path: 'listings/search', queryParameters: queryParameters);
   }
 
   static Uri _build({

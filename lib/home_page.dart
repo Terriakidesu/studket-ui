@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import 'api/api_auth_session.dart';
 import 'api/api_base_url.dart';
@@ -38,6 +39,7 @@ class _MyHomePageState extends State<MyHomePage> {
   final Set<String> _selectedTags = <String>{};
   final ScrollController _saleFeedScrollController = ScrollController();
   final ScrollController _lookingForScrollController = ScrollController();
+  Timer? _searchDebounce;
 
   static const List<String> _fallbackFeedTags = <String>[
     'food',
@@ -76,6 +78,7 @@ class _MyHomePageState extends State<MyHomePage> {
     _saleFeedScrollController.dispose();
     _lookingForScrollController.dispose();
     _searchController.dispose();
+    _searchDebounce?.cancel();
     super.dispose();
   }
 
@@ -99,12 +102,21 @@ class _MyHomePageState extends State<MyHomePage> {
     });
 
     try {
-      final Uri uri = ApiRoutes.listingsFeed(
-        userId: ApiAuthSession.accountId,
-        tags: _selectedTags.toList(growable: false),
-        limit: _feedPageSize,
-        offset: reset ? 0 : _feedOffset,
-      );
+      final String query = _searchController.text.trim();
+      final bool useSearch = query.isNotEmpty;
+      final Uri uri = useSearch
+          ? ApiRoutes.listingsSearch(
+              query: query,
+              tags: _selectedTags.toList(growable: false),
+              limit: _feedPageSize,
+              offset: reset ? 0 : _feedOffset,
+            )
+          : ApiRoutes.listingsFeed(
+              userId: ApiAuthSession.accountId,
+              tags: _selectedTags.toList(growable: false),
+              limit: _feedPageSize,
+              offset: reset ? 0 : _feedOffset,
+            );
       final http.Response response = await http
           .get(
             uri,
@@ -248,20 +260,7 @@ class _MyHomePageState extends State<MyHomePage> {
     return 'Feed request failed (HTTP ${response.statusCode}).';
   }
 
-  List<FeedListing> get _visibleFeedItems {
-    final String query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) {
-      return _feedItems;
-    }
-
-    return _feedItems.where((FeedListing item) {
-      return item.title.toLowerCase().contains(query) ||
-          item.description.toLowerCase().contains(query) ||
-          item.campus.toLowerCase().contains(query) ||
-          item.sellerUsername.toLowerCase().contains(query) ||
-          item.tags.any((String tag) => tag.toLowerCase().contains(query));
-    }).toList(growable: false);
-  }
+  List<FeedListing> get _visibleFeedItems => _feedItems;
 
   List<FeedListing> get _visibleSaleFeedItems {
     return _visibleFeedItems
@@ -284,6 +283,13 @@ class _MyHomePageState extends State<MyHomePage> {
       }
     });
     unawaited(_refreshFeedView());
+  }
+
+  void _handleSearchChanged() {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 200), () {
+      unawaited(_refreshFeedView());
+    });
   }
 
   String _formatMoney(num? value) {
@@ -497,14 +503,14 @@ class _MyHomePageState extends State<MyHomePage> {
                                   TextField(
                                     controller: _searchController,
                                     textInputAction: TextInputAction.search,
-                                    onChanged: (_) => setState(() {}),
+                                    onChanged: (_) => _handleSearchChanged(),
                                     decoration: InputDecoration(
                                       hintText: 'Search loaded listings',
                                       prefixIcon: const Icon(Icons.search),
                                       suffixIcon: IconButton(
                                         onPressed: () {
                                           _searchController.clear();
-                                          setState(() {});
+                                          _handleSearchChanged();
                                         },
                                         icon: const Icon(Icons.close),
                                       ),
@@ -896,6 +902,99 @@ class _MyHomePageState extends State<MyHomePage> {
       return const SizedBox(height: 12);
     }
     return const SizedBox(height: 20);
+  }
+}
+
+class _StaggeredTagChip extends StatefulWidget {
+  const _StaggeredTagChip({
+    required this.index,
+    required this.child,
+  });
+
+  final int index;
+  final Widget child;
+
+  @override
+  State<_StaggeredTagChip> createState() => _StaggeredTagChipState();
+}
+
+class _StaggeredTagChipState extends State<_StaggeredTagChip> {
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final int delay = (widget.index * 20).clamp(0, 260);
+    Future<void>.delayed(Duration(milliseconds: delay)).then((_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _visible = true;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      opacity: _visible ? 1 : 0,
+      child: AnimatedSlide(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        offset: _visible ? Offset.zero : const Offset(0, 0.08),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _TagChoicePill extends StatelessWidget {
+  const _TagChoicePill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final Color accent = colorScheme.primary;
+    final Color border = colorScheme.outlineVariant;
+    final Color surface = colorScheme.surface;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? accent : surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? accent : border,
+            width: 1,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ).copyWith(
+              color: selected ? colorScheme.onPrimary : accent,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
