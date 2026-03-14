@@ -35,6 +35,7 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
   bool _isLoadingListings = false;
   bool _isLoadingReviews = false;
   bool _isSubmittingReview = false;
+  bool _isSubmittingReport = false;
   bool _isLoadingProfile = false;
   String? _listingsError;
   String? _reviewsError;
@@ -440,6 +441,89 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
     }
   }
 
+  Future<void> _reportSeller() async {
+    final int? sellerId = widget.sellerAccountId;
+    final int? reporterId = ApiAuthSession.accountId;
+    if (sellerId == null) {
+      _showReportError('Seller account is unavailable for reporting.');
+      return;
+    }
+    if (reporterId == null) {
+      _showReportError('You must be logged in to submit a report.');
+      return;
+    }
+    if (_isSubmittingReport) {
+      return;
+    }
+
+    final _ReportDialogResult? result =
+        await showDialog<_ReportDialogResult>(
+      context: context,
+      builder: (context) => const _ReportDialog(
+        title: 'Report seller',
+        hintText: 'Tell us what happened',
+      ),
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _isSubmittingReport = true;
+    });
+
+    try {
+      final Map<String, dynamic> payload = <String, dynamic>{
+        'seller_id': sellerId,
+        'reporter_id': reporterId,
+        'reason': result.reason.trim(),
+        if (result.details.trim().isNotEmpty) 'details': result.details.trim(),
+      };
+
+      final http.Response response = await http
+          .post(
+            ApiRoutes.sellerReports(),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractErrorMessage(response));
+      }
+
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Report submitted. We’ll review it shortly.'),
+        ),
+      );
+    } on TimeoutException {
+      _showReportError('Report request timed out.');
+    } on SocketException {
+      _showReportError('Could not connect to submit the report.');
+    } on HttpException catch (error) {
+      _showReportError(error.message);
+    } on FormatException {
+      _showReportError('Report response format was invalid.');
+    } catch (_) {
+      _showReportError('Failed to submit report.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingReport = false;
+        });
+      }
+    }
+  }
+
   String _extractErrorMessage(http.Response response) {
     try {
       final dynamic decoded = jsonDecode(response.body);
@@ -495,6 +579,15 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
     });
   }
 
+  void _showReportError(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final String? profileAvatarUrl =
@@ -505,10 +598,33 @@ class _SellerProfilePageState extends State<SellerProfilePage> {
         normalizeApiAssetUrl(profileAvatarUrl)?.trim() ?? '';
     final bool hasSellerAvatar = resolvedAvatarUrl.isNotEmpty;
     final bool hasSellerAccountId = widget.sellerAccountId != null;
+    final bool canReportSeller =
+        hasSellerAccountId && widget.sellerAccountId != ApiAuthSession.accountId;
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        appBar: const StudketAppBar(title: 'Seller Profile'),
+        appBar: StudketAppBar(
+          title: 'Seller Profile',
+          actions: [
+            if (canReportSeller)
+              PopupMenuButton<_SellerProfileAction>(
+                tooltip: 'More options',
+                onSelected: (action) {
+                  switch (action) {
+                    case _SellerProfileAction.report:
+                      _reportSeller();
+                      break;
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: _SellerProfileAction.report,
+                    child: Text('Report seller'),
+                  ),
+                ],
+              ),
+          ],
+        ),
         body: Column(
           children: [
             Padding(
@@ -1651,4 +1767,96 @@ class _SellerProfileDetails {
           '',
     );
   }
+}
+
+enum _SellerProfileAction { report }
+
+class _ReportDialog extends StatefulWidget {
+  const _ReportDialog({
+    required this.title,
+    required this.hintText,
+  });
+
+  final String title;
+  final String hintText;
+
+  @override
+  State<_ReportDialog> createState() => _ReportDialogState();
+}
+
+class _ReportDialogState extends State<_ReportDialog> {
+  late final TextEditingController _reasonController;
+  late final TextEditingController _detailsController;
+
+  @override
+  void initState() {
+    super.initState();
+    _reasonController = TextEditingController();
+    _detailsController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    _detailsController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String reason = _reasonController.text.trim();
+    final bool canSubmit = reason.isNotEmpty;
+
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _reasonController,
+            decoration: InputDecoration(
+              labelText: 'Reason',
+              hintText: widget.hintText,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _detailsController,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Details (optional)',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: canSubmit
+              ? () => Navigator.of(context).pop(
+                    _ReportDialogResult(
+                      reason: _reasonController.text,
+                      details: _detailsController.text,
+                    ),
+                  )
+              : null,
+          child: const Text('Submit'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReportDialogResult {
+  const _ReportDialogResult({
+    required this.reason,
+    required this.details,
+  });
+
+  final String reason;
+  final String details;
 }

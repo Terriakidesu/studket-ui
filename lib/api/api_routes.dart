@@ -99,6 +99,22 @@ class ApiRoutes {
     return _build(path: 'reviews/$reviewId');
   }
 
+  static Uri listingReports() {
+    return _build(path: 'listing-reports/');
+  }
+
+  static Uri lookingForReports() {
+    return _build(path: 'looking-for-reports/');
+  }
+
+  static Uri conversationReports() {
+    return _build(path: 'conversation-reports/');
+  }
+
+  static Uri sellerReports() {
+    return _build(path: 'seller-reports/');
+  }
+
   static Uri listingInquiries(int listingId, {int? accountId}) {
     return _build(
       path: 'listings/$listingId/inquiries',

@@ -83,6 +83,7 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
   bool _hasSentInitialInquiry = false;
   bool _isConfirmingQr = false;
   bool _hasHandledScan = false;
+  bool _isSubmittingReport = false;
   final Set<String> _consumedQrTokens = <String>{};
 
   @override
@@ -730,6 +731,120 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
     return 'Messages request failed (HTTP ${response.statusCode}).';
   }
 
+  String _extractReportErrorMessage(http.Response response) {
+    try {
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final dynamic detail = decoded['detail'] ?? decoded['message'];
+        if (detail is String && detail.trim().isNotEmpty) {
+          return detail.trim();
+        }
+        if (detail is Map<String, dynamic>) {
+          final dynamic error = detail['error'];
+          if (error is String && error.trim().isNotEmpty) {
+            return error.trim();
+          }
+        }
+      }
+    } catch (_) {}
+    return 'Report request failed (HTTP ${response.statusCode}).';
+  }
+
+  Future<void> _reportConversation() async {
+    final int? conversationId = _activeConversationId;
+    final int? reporterId = ApiAuthSession.accountId;
+    if (conversationId == null) {
+      return;
+    }
+    if (reporterId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You must be logged in to submit a report.')),
+      );
+      return;
+    }
+    if (_isSubmittingReport) {
+      return;
+    }
+
+    final _ReportDialogResult? result =
+        await showDialog<_ReportDialogResult>(
+      context: context,
+      builder: (context) => const _ReportDialog(
+        title: 'Report conversation',
+        hintText: 'Tell us what went wrong',
+      ),
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _isSubmittingReport = true;
+    });
+
+    try {
+      final Map<String, dynamic> payload = <String, dynamic>{
+        'conversation_id': conversationId,
+        'reporter_id': reporterId,
+        'reason': result.reason.trim(),
+        if (widget.sellerAccountId != null)
+          'reported_account_id': widget.sellerAccountId,
+        if (result.details.trim().isNotEmpty) 'details': result.details.trim(),
+      };
+
+      final http.Response response = await http
+          .post(
+            ApiRoutes.conversationReports(),
+            headers: <String, String>{
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              ...ApiAuthSession.authHeaders(),
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(kApiRequestTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(_extractReportErrorMessage(response));
+      }
+
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Report submitted. We’ll review it shortly.'),
+        ),
+      );
+    } on TimeoutException {
+      _showReportError('Report request timed out.');
+    } on SocketException {
+      _showReportError('Could not connect to submit the report.');
+    } on HttpException catch (error) {
+      _showReportError(error.message);
+    } on FormatException {
+      _showReportError('Report response format was invalid.');
+    } catch (_) {
+      _showReportError('Failed to submit report.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmittingReport = false;
+        });
+      }
+    }
+  }
+
+  void _showReportError(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   Future<void> _sendMessage() async {
     final int? conversationId = _activeConversationId;
     final String text = _messageController.text.trim();
@@ -992,6 +1107,23 @@ class _ChatThreadPageState extends State<ChatThreadPage> {
             },
             icon: const Icon(Icons.person_outline),
           ),
+          if (conversationId != null)
+            PopupMenuButton<_ChatThreadAction>(
+              tooltip: 'More options',
+              onSelected: (action) {
+                switch (action) {
+                  case _ChatThreadAction.report:
+                    _reportConversation();
+                    break;
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: _ChatThreadAction.report,
+                  child: Text('Report conversation'),
+                ),
+              ],
+            ),
         ],
       ),
       body: AnimatedBuilder(
@@ -2406,6 +2538,98 @@ class InquiryProductData {
       imageUrl: normalizeApiAssetUrl((json['image_url'] ?? '').toString()) ?? '',
     );
   }
+}
+
+enum _ChatThreadAction { report }
+
+class _ReportDialog extends StatefulWidget {
+  const _ReportDialog({
+    required this.title,
+    required this.hintText,
+  });
+
+  final String title;
+  final String hintText;
+
+  @override
+  State<_ReportDialog> createState() => _ReportDialogState();
+}
+
+class _ReportDialogState extends State<_ReportDialog> {
+  late final TextEditingController _reasonController;
+  late final TextEditingController _detailsController;
+
+  @override
+  void initState() {
+    super.initState();
+    _reasonController = TextEditingController();
+    _detailsController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    _detailsController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String reason = _reasonController.text.trim();
+    final bool canSubmit = reason.isNotEmpty;
+
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _reasonController,
+            decoration: InputDecoration(
+              labelText: 'Reason',
+              hintText: widget.hintText,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _detailsController,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Details (optional)',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: canSubmit
+              ? () => Navigator.of(context).pop(
+                    _ReportDialogResult(
+                      reason: _reasonController.text,
+                      details: _detailsController.text,
+                    ),
+                  )
+              : null,
+          child: const Text('Submit'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReportDialogResult {
+  const _ReportDialogResult({
+    required this.reason,
+    required this.details,
+  });
+
+  final String reason;
+  final String details;
 }
 
 class _ResolvedInquiryPreview {
