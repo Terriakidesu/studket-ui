@@ -102,23 +102,61 @@
   <body>
     <main class="card">
       <h1>Studket for Android</h1>
-      <div class="version">v0.2.0-beta</div>
+      <div class="version" id="release-tag">Latest release</div>
       <p>
-        Download the latest beta APK for the Studket marketplace app. This build
-        is intended for testing and feedback.
+        Download the latest Studket APK from GitHub Releases. The link updates
+        automatically whenever a new release is published.
       </p>
-      <a
-        class="download"
-        href="https://github.com/Terriakidesu/studket-ui/releases/download/beta/Studket-v0.2.0-beta.apk"
-        download
-      >
-        Download APK
+      <a class="download" id="download-link" href="#" aria-disabled="true">
+        Loading latest APK…
       </a>
-      <div class="meta">
-        If the download is blocked, open the link directly:
-        <code>Studket-v0.2.0-beta.apk</code>
+      <div class="meta" id="release-meta">
+        Fetching release data from GitHub.
       </div>
       <footer>Built for GitHub Pages</footer>
     </main>
+    <script>
+      const repo = "Terriakidesu/studket-ui";
+      const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
+      const tagEl = document.getElementById("release-tag");
+      const linkEl = document.getElementById("download-link");
+      const metaEl = document.getElementById("release-meta");
+
+      async function loadLatestApk() {
+        try {
+          const response = await fetch(apiUrl, {
+            headers: { Accept: "application/vnd.github+json" },
+          });
+          if (!response.ok) {
+            throw new Error(`GitHub API error: ${response.status}`);
+          }
+          const release = await response.json();
+          const assets = Array.isArray(release.assets) ? release.assets : [];
+          const apkAsset = assets.find((asset) =>
+            String(asset.name || "").toLowerCase().endsWith(".apk")
+          );
+          if (!apkAsset) {
+            throw new Error("No APK asset found in the latest release.");
+          }
+
+          tagEl.textContent = release.tag_name || "Latest release";
+          linkEl.href = apkAsset.browser_download_url;
+          linkEl.textContent = "Download APK";
+          linkEl.setAttribute("download", apkAsset.name || "Studket.apk");
+          linkEl.setAttribute("aria-disabled", "false");
+          metaEl.innerHTML = `Asset: <code>${apkAsset.name}</code>`;
+        } catch (error) {
+          tagEl.textContent = "Latest release";
+          linkEl.textContent = "View releases";
+          linkEl.href = `https://github.com/${repo}/releases`;
+          linkEl.removeAttribute("download");
+          linkEl.setAttribute("aria-disabled", "false");
+          metaEl.textContent =
+            "Could not load the latest APK automatically. Open the releases page.";
+        }
+      }
+
+      loadLatestApk();
+    </script>
   </body>
 </html>
