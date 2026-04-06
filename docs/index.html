@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Studket APK Download</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #0f1a14;
+        --card: #16251c;
+        --accent: #7fd68b;
+        --accent-dark: #2f7d32;
+        --text: #e4ece3;
+        --muted: #a8b8ad;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Source Sans Pro", "Segoe UI", sans-serif;
+        background: radial-gradient(
+            circle at top,
+            rgba(127, 214, 139, 0.12),
+            transparent 60%
+          ),
+          var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+      .card {
+        max-width: 560px;
+        width: 100%;
+        background: var(--card);
+        border-radius: 24px;
+        padding: 32px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 32px;
+        letter-spacing: 0.2px;
+      }
+      p {
+        margin: 0 0 20px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .version {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(127, 214, 139, 0.12);
+        color: var(--accent);
+        font-weight: 600;
+        margin-bottom: 20px;
+      }
+      .download {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 14px 22px;
+        border-radius: 14px;
+        text-decoration: none;
+        color: #0c2b13;
+        background: linear-gradient(135deg, var(--accent), #b8f2c0);
+        font-weight: 700;
+        font-size: 16px;
+        box-shadow: 0 10px 24px rgba(47, 125, 50, 0.35);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+      .download:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 28px rgba(47, 125, 50, 0.45);
+      }
+      .meta {
+        margin-top: 20px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .meta code {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.08);
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      footer {
+        margin-top: 24px;
+        font-size: 12px;
+        color: rgba(228, 236, 227, 0.7);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Studket for Android</h1>
+      <div class="version">v0.2.0-beta</div>
+      <p>
+        Download the latest beta APK for the Studket marketplace app. This build
+        is intended for testing and feedback.
+      </p>
+      <a
+        class="download"
+        href="https://github.com/Terriakidesu/studket-ui/releases/download/beta/Studket-v0.2.0-beta.apk"
+        download
+      >
+        Download APK
+      </a>
+      <div class="meta">
+        If the download is blocked, open the link directly:
+        <code>Studket-v0.2.0-beta.apk</code>
+      </div>
+      <footer>Built for GitHub Pages</footer>
+    </main>
+  </body>
+</html>
