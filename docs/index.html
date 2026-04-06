@@ -117,7 +117,7 @@
     </main>
     <script>
       const repo = "Terriakidesu/studket-ui";
-      const apiUrl = `https://api.github.com/repos/${repo}/releases/latest`;
+      const apiUrl = `https://api.github.com/repos/${repo}/releases?per_page=5`;
       const tagEl = document.getElementById("release-tag");
       const linkEl = document.getElementById("download-link");
       const metaEl = document.getElementById("release-meta");
@@ -130,7 +130,18 @@
           if (!response.ok) {
             throw new Error(`GitHub API error: ${response.status}`);
           }
-          const release = await response.json();
+          const releases = await response.json();
+          const list = Array.isArray(releases) ? releases : [];
+          const release = list.find((item) => {
+            const assets = Array.isArray(item.assets) ? item.assets : [];
+            return assets.some((asset) =>
+              String(asset.name || "").toLowerCase().endsWith(".apk")
+            );
+          });
+          if (!release) {
+            throw new Error("No release with an APK asset found.");
+          }
+
           const assets = Array.isArray(release.assets) ? release.assets : [];
           const apkAsset = assets.find((asset) =>
             String(asset.name || "").toLowerCase().endsWith(".apk")
